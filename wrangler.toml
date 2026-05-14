@@ -1,0 +1,9 @@
+name = "lang-tool"
+compatibility_date = "2025-03-01"
+
+# Serve the Vite-built static assets from dist/.
+# `single-page-application` makes 404s fall back to index.html so client-side
+# routing works (we don't use a router yet but this is the right default).
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
