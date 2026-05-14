@@ -1,0 +1,17 @@
+node_modules/
+dist/
+
+# Anthropic API key and other secrets
+.env.local
+.env.*.local
+
+# Supabase CLI local state — links the working directory to a remote project.
+# Not committed; each developer runs `supabase link` locally.
+supabase/.temp/
+supabase/.branches/
+
+# Editor cruft
+.vscode/
+.idea/
+*.swp
+.DS_Store
