@@ -14,6 +14,7 @@ import {
   updatePassageContent,
   upsertReadingState,
   upsertSettings,
+  verifyEmailCode,
 } from './supabase';
 import {
   Chunk,
@@ -848,8 +849,11 @@ export function App() {
   if (authStatus === 'unauthenticated') {
     return (
       <LoginView
-        onSignIn={async (email) => {
+        onSendCode={async (email) => {
           await signInWithEmail(email);
+        }}
+        onVerifyCode={async (email, code) => {
+          await verifyEmailCode(email, code);
         }}
       />
     );

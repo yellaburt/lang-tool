@@ -108,27 +108,30 @@ export function LoadingView({ message }: { message: string }) {
   );
 }
 
-// === Login view (magic-link email) ===
+// === Login view (email + 6-digit code) ===
 
 export function LoginView({
-  onSignIn,
+  onSendCode,
+  onVerifyCode,
 }: {
-  onSignIn: (email: string) => Promise<void>;
+  onSendCode: (email: string) => Promise<void>;
+  onVerifyCode: (email: string, code: string) => Promise<void>;
 }) {
   const [email, setEmail] = useState('');
-  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>(
-    'idle',
-  );
+  const [code, setCode] = useState('');
+  const [status, setStatus] = useState<
+    'idle' | 'sending' | 'sent' | 'verifying' | 'error'
+  >('idle');
   const [error, setError] = useState<string | null>(null);
 
-  async function submit(e: FormEvent) {
+  async function sendCode(e: FormEvent) {
     e.preventDefault();
     const trimmed = email.trim();
     if (trimmed.length === 0) return;
     setStatus('sending');
     setError(null);
     try {
-      await onSignIn(trimmed);
+      await onSendCode(trimmed);
       setStatus('sent');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -136,30 +139,73 @@ export function LoginView({
     }
   }
 
+  async function verifyCode(e: FormEvent) {
+    e.preventDefault();
+    const trimmedCode = code.trim();
+    if (trimmedCode.length === 0) return;
+    setStatus('verifying');
+    setError(null);
+    try {
+      await onVerifyCode(email.trim(), trimmedCode);
+      // The auth state listener in App will pick up the new session.
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setStatus('sent'); // back to code-entry so user can retry
+    }
+  }
+
   return (
     <main className="container login-view">
       <h1>lang-tool</h1>
       <p className="muted">Sign in to access your library across devices.</p>
-      {status === 'sent' ? (
+      {status === 'sent' || status === 'verifying' ? (
         <div className="login-sent">
           <p>
-            <strong>Check your email.</strong> We sent a sign-in link to{' '}
-            <code>{email}</code>. Click it to sign in. You can close this tab —
-            the link will open the app and sign you in.
+            <strong>Check your email.</strong> We sent a sign-in code to{' '}
+            <code>{email}</code>. Enter the 6-digit code below.
           </p>
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => {
-              setStatus('idle');
-              setError(null);
-            }}
-          >
-            Use a different email
-          </button>
+          <p className="muted small">
+            You can also click the magic link in the email — but if your default
+            browser isn't where you want to use the app, type the code here
+            instead.
+          </p>
+          <form className="login-form" onSubmit={verifyCode}>
+            <label className="login-label">
+              <span>Code</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="123456"
+                autoComplete="one-time-code"
+                autoFocus
+                required
+              />
+            </label>
+            {error !== null && <div className="error-banner">{error}</div>}
+            <button
+              type="submit"
+              disabled={status === 'verifying' || code.length === 0}
+            >
+              {status === 'verifying' ? 'Verifying…' : 'Sign in'}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                setStatus('idle');
+                setCode('');
+                setError(null);
+              }}
+            >
+              Use a different email
+            </button>
+          </form>
         </div>
       ) : (
-        <form className="login-form" onSubmit={submit}>
+        <form className="login-form" onSubmit={sendCode}>
           <label className="login-label">
             <span>Email</span>
             <input
@@ -174,7 +220,7 @@ export function LoginView({
           </label>
           {error !== null && <div className="error-banner">{error}</div>}
           <button type="submit" disabled={status === 'sending' || email.trim().length === 0}>
-            {status === 'sending' ? 'Sending…' : 'Send sign-in link'}
+            {status === 'sending' ? 'Sending…' : 'Send sign-in code'}
           </button>
         </form>
       )}

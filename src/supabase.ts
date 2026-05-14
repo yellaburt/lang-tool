@@ -46,9 +46,24 @@ export async function signInWithEmail(email: string): Promise<void> {
   const { error } = await supabase.auth.signInWithOtp({
     email,
     options: {
-      // Redirect back to the current origin after clicking the magic link.
+      // The email Supabase sends contains BOTH a magic link AND a 6-digit
+      // code. The link uses this redirect; the code can be entered into the
+      // app in any browser, bypassing the "magic link opens default browser"
+      // problem.
       emailRedirectTo: window.location.origin,
     },
+  });
+  if (error) throw new Error(error.message);
+}
+
+// Verify a 6-digit code from the sign-in email. Used as an alternative to
+// clicking the magic link — handy when the default browser is not the one
+// the user wants to use the app in.
+export async function verifyEmailCode(email: string, token: string): Promise<void> {
+  const { error } = await supabase.auth.verifyOtp({
+    email,
+    token,
+    type: 'email',
   });
   if (error) throw new Error(error.message);
 }
