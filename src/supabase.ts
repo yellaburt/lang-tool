@@ -11,20 +11,22 @@ import {
 import { defaultSettings, emptyLearnerState } from './core';
 
 // === Client ===
+//
+// Supabase URL and the publishable (anon) key are hardcoded. Both are
+// designed to be public:
+//   - URL is the project's public endpoint.
+//   - publishable key is constrained by RLS policies; it gives no privilege
+//     beyond what each user is explicitly allowed.
+// The TRUE secret (service-role key + ANTHROPIC_API_KEY) lives only in
+// Supabase Edge Function secrets, never in client code.
+//
+// Hardcoding avoids fighting Cloudflare's env-var UI for static-only Workers
+// and means new contributors don't need a local .env.local to run the app.
 
-function readEnv(): { url: string; anonKey: string } {
-  const url = import.meta.env.VITE_SUPABASE_URL;
-  const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
-  if (!url || !key) {
-    throw new Error(
-      'Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY in .env.local',
-    );
-  }
-  return { url, anonKey: key };
-}
+const SUPABASE_URL = 'https://vbqnmwsmgdbwewzsfxud.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable__4QHolk1se7EUcgIMjOvHw_y7u1HjlX';
 
-const env = readEnv();
-export const supabase: SupabaseClient = createClient(env.url, env.anonKey);
+export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // === Auth ===
 

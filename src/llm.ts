@@ -16,11 +16,8 @@ export async function splitAndGloss(
 }
 
 // Retained for backward compatibility with views that gate UI on whether the
-// API path is configured. With the Edge Function in place, this is always
-// "configured" once the user is authenticated — the actual call will fail
-// loudly if the server-side ANTHROPIC_API_KEY secret is missing.
+// API path is configured. With the Edge Function in place and the Supabase
+// credentials hardcoded, this is always true at runtime.
 export function hasApiKey(): boolean {
-  const url = import.meta.env.VITE_SUPABASE_URL;
-  const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
-  return typeof url === 'string' && url.length > 0 && typeof key === 'string' && key.length > 0;
+  return true;
 }
