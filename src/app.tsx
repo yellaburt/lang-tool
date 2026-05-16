@@ -7,6 +7,7 @@ import {
   AuthSession,
   deletePassage as supabaseDeletePassage,
   fetchLearnerState,
+  fetchPassages,
   getCurrentSession,
   insertPassage,
   signInWithPassword,
@@ -75,6 +76,11 @@ export type AppAction =
   | { readonly kind: 'library-loaded'; readonly learner: LearnerState }
   | { readonly kind: 'set-draft'; readonly text: string }
   | { readonly kind: 'start-passage'; readonly passage: Passage }
+  | { readonly kind: 'save-passage'; readonly passage: Passage }
+  | {
+      readonly kind: 'refresh-passages';
+      readonly passages: Readonly<Record<PassageId, Passage>>;
+    }
   | {
       readonly kind: 'append-chunks';
       readonly passageId: PassageId;
@@ -201,6 +207,49 @@ function reducer(state: AppState, action: AppAction): AppState {
           isPaused: false,
           processingError: null,
         },
+      };
+    }
+
+    case 'save-passage': {
+      // Add the passage to the library and return to the library view. The
+      // batch-fetch effect will process chunks in the background while the
+      // user is in the library, because currentPassageId is set. When the
+      // first batch lands, the view doesn't transition (see append-chunks).
+      return {
+        learner: addPassage(state.learner, action.passage),
+        ui: {
+          ...state.ui,
+          view: 'library',
+          currentPassageId: action.passage.id,
+          draftText: '',
+          spanishTtsDone: false,
+          englishTtsDone: false,
+          reReadDone: false,
+          isPaused: false,
+          processingError: null,
+        },
+      };
+    }
+
+    case 'refresh-passages': {
+      // Replace the passage map with what Supabase reports, but never
+      // clobber locally-newer state: if our client has MORE chunks than the
+      // server's view (because we're mid-batch-processing and haven't
+      // pushed yet), keep the client version. Client-only passages (not in
+      // server response) are preserved too.
+      const merged: Record<PassageId, Passage> = {};
+      for (const [pid, sp] of Object.entries(action.passages)) {
+        const id = pid as PassageId;
+        const cp = state.learner.passages[id];
+        merged[id] = cp && cp.chunks.length > sp.chunks.length ? cp : sp;
+      }
+      for (const [pid, cp] of Object.entries(state.learner.passages)) {
+        const id = pid as PassageId;
+        if (!(id in merged)) merged[id] = cp;
+      }
+      return {
+        ...state,
+        learner: { ...state.learner, passages: merged },
       };
     }
 
@@ -747,6 +796,30 @@ export function App() {
 
     prevLearnerRef.current = curr;
   }, [state.learner, libraryStatus, session]);
+
+  // Library auto-refresh: every time the user navigates to the library view,
+  // re-fetch passages from Supabase so additions made on another device show
+  // up without a manual reload. The merge in the `refresh-passages` reducer
+  // never clobbers locally-newer state.
+  const currentView = state.ui.view;
+  useEffect(() => {
+    if (currentView !== 'library') return;
+    if (libraryStatus !== 'ready') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const passages = await fetchPassages();
+        if (cancelled) return;
+        dispatch({ kind: 'refresh-passages', passages });
+      } catch (e) {
+        // Silent: keep showing stale data rather than blocking the UI.
+        console.warn('Library refresh failed', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentView, libraryStatus]);
 
   // Apply theme + emphasis-style as data attributes on the root element.
   // CSS variables and emphasis rules key off these.

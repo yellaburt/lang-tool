@@ -498,6 +498,12 @@ export function PasteView({ state, dispatch }: ViewProps) {
     if (passage === null) return;
     dispatch({ kind: 'start-passage', passage });
   }
+  function onSave() {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    const passage = buildEmptyPassage(state.ui.draftText);
+    if (passage === null) return;
+    dispatch({ kind: 'save-passage', passage });
+  }
   return (
     <main className="container">
       <h1>lang-tool</h1>
@@ -529,6 +535,15 @@ export function PasteView({ state, dispatch }: ViewProps) {
       <div className="actions">
         <button type="button" disabled={!canStart} onClick={onStart}>
           Start reading
+        </button>
+        <button
+          type="button"
+          className="ghost"
+          disabled={!canStart}
+          onClick={onSave}
+          title="Save to library without starting to read"
+        >
+          Save
         </button>
         <button
           type="button"
