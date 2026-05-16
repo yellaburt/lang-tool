@@ -163,6 +163,11 @@ h2 {
 
 /* Alert/state colors stay theme-neutral so they reliably grab attention. */
 .error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
   background: #fff4f4;
   border: 1px solid #f1c4c4;
   color: #a22323;
@@ -170,6 +175,22 @@ h2 {
   border-radius: 4px;
   margin-bottom: 1rem;
   font-size: 0.95rem;
+}
+
+.error-banner .retry-btn {
+  background: #a22323;
+  color: #fff;
+  border: none;
+  padding: 0.35rem 0.85rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.error-banner .retry-btn:hover {
+  background: #c02b2b;
 }
 
 /* ===== Login / loading ===== */

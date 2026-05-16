@@ -93,6 +93,7 @@ export type AppAction =
       readonly passageId: PassageId;
       readonly message: string;
     }
+  | { readonly kind: 'retry-passage-processing'; readonly passageId: PassageId }
   | { readonly kind: 'cancel-processing' }
   | { readonly kind: 'spanish-tts-finished'; readonly chunkId: ChunkId }
   | { readonly kind: 'english-tts-finished'; readonly chunkId: ChunkId }
@@ -328,6 +329,37 @@ function reducer(state: AppState, action: AppAction): AppState {
           processingError: isFirstBatchError ? action.message : state.ui.processingError,
           activeBatchFetch: null,
         },
+      };
+    }
+
+    case 'retry-passage-processing': {
+      // Reset an errored passage back to in-progress so the batch-fetch
+      // effect picks it up again. The resume point is computed from how
+      // many sentences are represented in existing chunks — we don't store
+      // the count in the error state itself.
+      const existing = state.learner.passages[action.passageId];
+      if (!existing) return state;
+      let processedSentenceCount = 0;
+      if (existing.chunks.length > 0) {
+        const maxIdx = existing.chunks.reduce(
+          (m, c) => (c.sentenceIndex > m ? c.sentenceIndex : m),
+          -1,
+        );
+        processedSentenceCount = Math.min(maxIdx + 1, existing.sentenceCount);
+      }
+      const newStatus: ProcessingStatus =
+        processedSentenceCount >= existing.sentenceCount
+          ? { kind: 'complete' }
+          : { kind: 'in-progress', processedSentenceCount };
+      return {
+        learner: {
+          ...state.learner,
+          passages: {
+            ...state.learner.passages,
+            [action.passageId]: { ...existing, processingStatus: newStatus },
+          },
+        },
+        ui: { ...state.ui, processingError: null },
       };
     }
 

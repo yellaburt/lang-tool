@@ -1035,7 +1035,21 @@ export function ReadingView({ state, dispatch }: ViewProps) {
 
       {passageError !== null && (
         <div className="error-banner" role="alert">
-          <strong>Translation failed:</strong> {passageError}
+          <span>{passageError}</span>
+          {currentPassageId !== null && (
+            <button
+              type="button"
+              className="retry-btn"
+              onClick={() =>
+                dispatch({
+                  kind: 'retry-passage-processing',
+                  passageId: currentPassageId,
+                })
+              }
+            >
+              Try again
+            </button>
+          )}
         </div>
       )}
 

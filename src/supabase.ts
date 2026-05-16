@@ -232,15 +232,73 @@ export async function fetchLearnerState(): Promise<LearnerState> {
 
 // === Edge Function: chunk-and-gloss ===
 
-export async function callChunkAndGloss(text: string): Promise<ReadonlyArray<ChunkAndGloss>> {
-  const { data, error } = await supabase.functions.invoke('chunk-and-gloss', {
-    body: { text },
-  });
-  if (error) throw new Error(`chunk-and-gloss: ${error.message}`);
-  const payload = data as { chunks?: ReadonlyArray<ChunkAndGloss>; error?: string };
-  if (payload.error) throw new Error(payload.error);
-  if (!payload.chunks || payload.chunks.length === 0) {
-    throw new Error('chunk-and-gloss returned no chunks');
+// Map raw Supabase / Anthropic error strings to short, user-readable text.
+// The raw messages ("Edge Function returned a non-2xx status code") are
+// useless to a reader; this surface is what shows up in the error banner.
+function humanizeChunkAndGlossError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/401|unauthor/i.test(msg)) {
+    return 'Your sign-in expired. Please sign out and back in.';
   }
-  return payload.chunks;
+  if (/429|rate.?limit/i.test(msg)) {
+    return 'Translation service is rate-limited. Wait a minute and try again.';
+  }
+  if (/network|fetch|failed to fetch|abort/i.test(msg)) {
+    return "Couldn't reach the translation service. Check your connection.";
+  }
+  if (/non-2xx|edge function|earlydrop|timeout|503|502|504/i.test(msg)) {
+    return 'Translation service had a hiccup. Please try again.';
+  }
+  return 'Translation service had a problem. Please try again.';
+}
+
+function isAuthError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /401|unauthor/i.test(msg);
+}
+
+export async function callChunkAndGloss(text: string): Promise<ReadonlyArray<ChunkAndGloss>> {
+  // Retry transient failures (EarlyDrop, network blips, 5xx) silently. Most
+  // of the failures we see are these — auto-retry usually wins before the
+  // user notices anything. Auth errors aren't retried since they won't
+  // resolve themselves.
+  const maxAttempts = 3;
+  let lastErr: unknown = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (attempt > 1) {
+      // Exponential backoff: ~1s, ~2s between attempts (≤3s total wait).
+      const waitMs = 1000 * Math.pow(2, attempt - 2);
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+    try {
+      const { data, error } = await supabase.functions.invoke('chunk-and-gloss', {
+        body: { text },
+      });
+      if (error) {
+        lastErr = error;
+        if (isAuthError(error)) break;
+        continue;
+      }
+      const payload = data as { chunks?: ReadonlyArray<ChunkAndGloss>; error?: string };
+      if (payload.error) {
+        // App-level error from the function (e.g. Anthropic refused content).
+        // Don't retry these — they're deterministic.
+        throw new Error(payload.error);
+      }
+      if (!payload.chunks || payload.chunks.length === 0) {
+        // Empty response — treat as transient and retry.
+        lastErr = new Error('No content returned');
+        continue;
+      }
+      return payload.chunks;
+    } catch (e) {
+      lastErr = e;
+      if (isAuthError(e)) break;
+      // Other errors (incl. "App-level error from function") flow through.
+      // We retry once more in case the body parse itself was a flake.
+    }
+  }
+  // Log the technical detail for debugging, then surface the friendly one.
+  console.error('chunk-and-gloss failed after retries:', lastErr);
+  throw new Error(humanizeChunkAndGlossError(lastErr));
 }
