@@ -428,28 +428,11 @@ function reducer(state: AppState, action: AppAction): AppState {
       };
 
     case 'toggle-pause': {
-      // Pause semantics: first press = stop auto-advance, stay on this chunk.
-      // Second press = advance to next chunk and resume auto-flow.
-      if (!state.ui.isPaused) {
-        return { ...state, ui: { ...state.ui, isPaused: true } };
-      }
-      const passageId = state.ui.currentPassageId;
-      if (passageId === null) {
-        return { ...state, ui: { ...state.ui, isPaused: false } };
-      }
-      const passage = state.learner.passages[passageId];
-      if (!passage) return { ...state, ui: { ...state.ui, isPaused: false } };
-      const next = setCurrentChunkIndex(state, passage.lastReadChunkIndex + 1);
-      return {
-        ...next,
-        ui: {
-          ...next.ui,
-          spanishTtsDone: false,
-          englishTtsDone: false,
-          reReadDone: false,
-          isPaused: false,
-        },
-      };
+      // Pause semantics: pause/resume the in-flight TTS in place. The speech
+      // effects (in ReadingView) call synth.pause()/synth.resume() based on
+      // isPaused, so toggling this flag freezes / continues the same
+      // utterance mid-word. To advance, use the ▶ button or → arrow.
+      return { ...state, ui: { ...state.ui, isPaused: !state.ui.isPaused } };
     }
 
     case 'set-speech-pace':

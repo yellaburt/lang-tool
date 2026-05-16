@@ -681,6 +681,31 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   const [isFading, setIsFading] = useState(false);
   const [fadeMs, setFadeMs] = useState(0);
 
+  // Per-phase speech controllers. Holding these in refs (rather than in
+  // useEffect cleanup closures) lets us pause/resume the same utterance
+  // across re-renders — the React effect lifecycle can't distinguish
+  // "deps changed because chunk advanced" from "deps changed because user
+  // hit pause", so we manage the lifetime explicitly.
+  const spanishSpeechRef = useRef<SpeechController | null>(null);
+  const englishSpeechRef = useRef<SpeechController | null>(null);
+  const reReadSpeechRef = useRef<SpeechController | null>(null);
+
+  // Cancel any in-flight utterance when the current chunk changes (or the
+  // view unmounts). Runs BEFORE the phase-driver effects start the next
+  // chunk's speech. We have to cancel all three because we may have been
+  // paused mid-English or mid-re-read when the user clicked advance.
+  useEffect(() => {
+    return () => {
+      const refs = [spanishSpeechRef, englishSpeechRef, reReadSpeechRef];
+      for (const r of refs) {
+        if (r.current && !r.current.isEnded()) {
+          r.current.cancel();
+        }
+        r.current = null;
+      }
+    };
+  }, [currentChunk?.id]);
+
   // Keep the active row (or the done message at end of passage) in view as
   // chunks advance, so the reader never has to manually scroll.
   useEffect(() => {
@@ -694,26 +719,44 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     }
   }, [currentChunkIndex, isDone]);
 
-  // Speak the Spanish chunk when it becomes current (or on replay).
-  // Pause OR open settings cancels the in-flight utterance immediately;
-  // resuming (via second space-press) advances to the next chunk where speech
-  // starts fresh. Closing settings restarts the current chunk's audio.
+  // Speak the Spanish chunk when it becomes current (or on replay). Pause
+  // pauses the utterance mid-word (true Web Speech pause), resume continues
+  // from where it left off. Opening settings still cancels — closing
+  // settings restarts the chunk from the start.
   useEffect(() => {
     if (!currentChunk) return;
     if (spanishTtsDone) return;
-    if (isPaused) return;
-    if (settingsOpen) return;
+
+    if (settingsOpen) {
+      if (spanishSpeechRef.current && !spanishSpeechRef.current.isEnded()) {
+        spanishSpeechRef.current.cancel();
+      }
+      spanishSpeechRef.current = null;
+      return;
+    }
+
+    if (isPaused) {
+      if (spanishSpeechRef.current && !spanishSpeechRef.current.isEnded()) {
+        spanishSpeechRef.current.pause();
+      }
+      return;
+    }
+
+    // Resume the same utterance if we have one parked from a prior pause.
+    if (spanishSpeechRef.current && !spanishSpeechRef.current.isEnded()) {
+      spanishSpeechRef.current.resume();
+      return;
+    }
 
     const chunkAtStart = currentChunk;
     const ttsRate = 0.85 * speechPaceMultiplier;
-    const cancel = speakChunk(
+    spanishSpeechRef.current = speakChunk(
       currentChunk.tlText,
       firstVoice,
       ttsRate,
       speechPaceMultiplier,
       () => dispatch({ kind: 'spanish-tts-finished', chunkId: chunkAtStart.id }),
     );
-    return cancel;
   }, [
     currentChunk?.id,
     spanishTtsDone,
@@ -731,8 +774,27 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     if (!spanishTtsDone) return;
     if (englishTtsDone) return;
     if (!englishTtsEnabled) return;
-    if (isPaused) return;
-    if (settingsOpen) return;
+
+    if (settingsOpen) {
+      if (englishSpeechRef.current && !englishSpeechRef.current.isEnded()) {
+        englishSpeechRef.current.cancel();
+      }
+      englishSpeechRef.current = null;
+      return;
+    }
+
+    if (isPaused) {
+      if (englishSpeechRef.current && !englishSpeechRef.current.isEnded()) {
+        englishSpeechRef.current.pause();
+      }
+      return;
+    }
+
+    if (englishSpeechRef.current && !englishSpeechRef.current.isEnded()) {
+      englishSpeechRef.current.resume();
+      return;
+    }
+
     const gloss = currentChunk.englishGloss;
     if (gloss === null || gloss.length === 0) {
       dispatch({ kind: 'english-tts-finished', chunkId: currentChunk.id });
@@ -740,14 +802,13 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     }
     const chunkAtStart = currentChunk;
     const ttsRate = 0.95 * englishSpeechPaceMultiplier;
-    const cancel = speakChunk(
+    englishSpeechRef.current = speakChunk(
       gloss,
       englishVoice,
       ttsRate,
       englishSpeechPaceMultiplier,
       () => dispatch({ kind: 'english-tts-finished', chunkId: chunkAtStart.id }),
     );
-    return cancel;
   }, [
     currentChunk?.id,
     spanishTtsDone,
@@ -770,18 +831,36 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     if (!spanishTtsDone) return;
     if (englishTtsEnabled && !englishTtsDone) return;
     if (reReadDone) return;
-    if (isPaused) return;
-    if (settingsOpen) return;
+
+    if (settingsOpen) {
+      if (reReadSpeechRef.current && !reReadSpeechRef.current.isEnded()) {
+        reReadSpeechRef.current.cancel();
+      }
+      reReadSpeechRef.current = null;
+      return;
+    }
+
+    if (isPaused) {
+      if (reReadSpeechRef.current && !reReadSpeechRef.current.isEnded()) {
+        reReadSpeechRef.current.pause();
+      }
+      return;
+    }
+
+    if (reReadSpeechRef.current && !reReadSpeechRef.current.isEnded()) {
+      reReadSpeechRef.current.resume();
+      return;
+    }
+
     const chunkAtStart = currentChunk;
     const ttsRate = 0.85 * reReadPaceMultiplier;
-    const cancel = speakChunk(
+    reReadSpeechRef.current = speakChunk(
       currentChunk.tlText,
       secondVoice,
       ttsRate,
       reReadPaceMultiplier,
       () => dispatch({ kind: 're-read-tts-finished', chunkId: chunkAtStart.id }),
     );
-    return cancel;
   }, [
     currentChunk?.id,
     reReadEnabled,
@@ -1053,9 +1132,9 @@ function SentenceItem({
             e.currentTarget.blur();
             dispatch({ kind: 'toggle-pause' });
           }}
-          title="Resume / advance to next chunk"
+          title="Resume from where you paused"
         >
-          paused — tap or space to advance
+          paused — tap or space to resume
         </button>
       )}
     </li>
@@ -1097,7 +1176,7 @@ function ControlBar({
           dispatch({ kind: 'toggle-pause' });
         }}
       >
-        {isPaused ? '▶ Next' : '⏸ Pause'}
+        {isPaused ? '▶ Resume' : '⏸ Pause'}
       </button>
       <button
         type="button"
@@ -1290,37 +1369,72 @@ function ErrorView({
 
 // === TTS helpers (shell-layer; pure-ish wrappers around Web Speech API) ===
 
+// Returned by speakChunk so callers can pause/resume the in-flight utterance
+// (true mid-word resume via Web Speech API) or cancel it outright. Replaces
+// the older "cleanup function" return — we now need three distinct verbs
+// because pause/resume must preserve the utterance, cancel must throw it
+// away, and the React effect lifecycle alone can't distinguish those.
+interface SpeechController {
+  readonly pause: () => void;
+  readonly resume: () => void;
+  readonly cancel: () => void;
+  readonly isEnded: () => boolean;
+}
+
 function speakChunk(
   text: string,
   voice: SpeechSynthesisVoice | null,
   rate: number,
   paceMultiplier: number,
   onEnd: () => void,
-): () => void {
-  // `cancelled` flips when the caller's cleanup runs (chunk advanced, paused,
-  // effect re-ran). `ended` flips when the utterance itself naturally finishes
-  // or errors. The cleanup uses `ended` to decide whether to call
-  // synth.cancel() — calling cancel() on an idle synth can leave Chrome in a
-  // state where the next speak() silently fails, which was the bug behind
-  // re-read dropping after the first chunk.
+): SpeechController {
+  // `cancelled` flips when the caller calls cancel(). `ended` flips when the
+  // utterance itself naturally finishes or errors. cancel() uses `ended` to
+  // decide whether to call synth.cancel() — calling cancel() on an idle synth
+  // can leave Chrome in a state where the next speak() silently fails, which
+  // was the bug behind re-read dropping after the first chunk.
   let cancelled = false;
   let ended = false;
 
   // If no voice is available, skip TTS entirely rather than reading with the
   // wrong-language pronunciation. Use a silent reading delay instead so the
-  // flow still progresses.
+  // flow still progresses. Pause/resume on the silent path uses Date.now()
+  // accounting: when paused we record how much was left, on resume we set a
+  // fresh timeout for the remaining time.
   if (typeof speechSynthesis === 'undefined' || voice === null) {
     const words = text.split(/\s+/).filter((w) => w.length > 0).length;
-    const readMs = Math.max(1500, words * 400) / paceMultiplier;
-    const t = window.setTimeout(() => {
+    const totalMs = Math.max(1500, words * 400) / paceMultiplier;
+    let remainingMs = totalMs;
+    let timerStart = Date.now();
+    let timer: number | null = window.setTimeout(fire, totalMs);
+    function fire() {
+      timer = null;
       ended = true;
       if (!cancelled) onEnd();
-    }, readMs);
-    return () => {
-      cancelled = true;
-      if (!ended) window.clearTimeout(t);
+    }
+    return {
+      pause: () => {
+        if (timer === null || ended || cancelled) return;
+        window.clearTimeout(timer);
+        timer = null;
+        remainingMs = Math.max(0, remainingMs - (Date.now() - timerStart));
+      },
+      resume: () => {
+        if (timer !== null || ended || cancelled) return;
+        timerStart = Date.now();
+        timer = window.setTimeout(fire, remainingMs);
+      },
+      cancel: () => {
+        cancelled = true;
+        if (timer !== null) {
+          window.clearTimeout(timer);
+          timer = null;
+        }
+      },
+      isEnded: () => ended,
     };
   }
+
   const u = new SpeechSynthesisUtterance(text);
   u.lang = voice.lang;
   u.voice = voice;
@@ -1334,14 +1448,27 @@ function speakChunk(
     if (!cancelled) onEnd();
   };
   speechSynthesis.speak(u);
-  return () => {
-    cancelled = true;
-    // Only cancel if this utterance hasn't naturally ended yet. Tracking the
-    // per-utterance `ended` flag avoids the cancel-on-idle Chrome bug far
-    // more reliably than reading speechSynthesis.speaking (which races).
-    if (!ended) {
-      speechSynthesis.cancel();
-    }
+  return {
+    pause: () => {
+      if (ended || cancelled) return;
+      // Web Speech pause() pauses the currently-speaking utterance. Even
+      // though the API is "global", in practice we only ever have one
+      // utterance active at a time across all three TTS phases.
+      speechSynthesis.pause();
+    },
+    resume: () => {
+      if (ended || cancelled) return;
+      // resume() is a no-op if the synth isn't actually paused, so guarding
+      // here isn't strictly necessary but makes the intent explicit.
+      if (speechSynthesis.paused) speechSynthesis.resume();
+    },
+    cancel: () => {
+      cancelled = true;
+      if (!ended) {
+        speechSynthesis.cancel();
+      }
+    },
+    isEnded: () => ended,
   };
 }
 
