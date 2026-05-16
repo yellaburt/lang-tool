@@ -42,30 +42,33 @@ export async function getCurrentSession(): Promise<AuthSession | null> {
   return { userId: s.user.id, email: s.user.email };
 }
 
-export async function signInWithEmail(email: string): Promise<void> {
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: {
-      // The email Supabase sends contains BOTH a magic link AND a 6-digit
-      // code. The link uses this redirect; the code can be entered into the
-      // app in any browser, bypassing the "magic link opens default browser"
-      // problem.
-      emailRedirectTo: window.location.origin,
-    },
-  });
-  if (error) throw new Error(error.message);
-}
+// Username → synthetic email map. Supabase's password auth requires an
+// email-shaped identifier; we use `.local` addresses that are never actually
+// emailed. Signups are disabled in the Supabase dashboard, so the only
+// accounts that can sign in are the ones provisioned out-of-band.
+//
+// To add a new user: create them in Supabase dashboard (Authentication →
+// Users → Add user → email + password, auto-confirm), then add an entry here
+// and redeploy.
+const USERNAME_TO_EMAIL: Readonly<Record<string, string>> = {
+  ARD: 'ard@lang-tool.local',
+  DPD: 'dpd@lang-tool.local',
+};
 
-// Verify a 6-digit code from the sign-in email. Used as an alternative to
-// clicking the magic link — handy when the default browser is not the one
-// the user wants to use the app in.
-export async function verifyEmailCode(email: string, token: string): Promise<void> {
-  const { error } = await supabase.auth.verifyOtp({
-    email,
-    token,
-    type: 'email',
-  });
-  if (error) throw new Error(error.message);
+export async function signInWithPassword(
+  username: string,
+  password: string,
+): Promise<void> {
+  const email = USERNAME_TO_EMAIL[username.trim().toUpperCase()];
+  if (!email) {
+    throw new Error('Unknown user. Try ARD or DPD.');
+  }
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) {
+    // Supabase returns "Invalid login credentials" for both wrong password
+    // and unknown user; surface it verbatim.
+    throw new Error(error.message);
+  }
 }
 
 export async function signOut(): Promise<void> {

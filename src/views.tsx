@@ -108,122 +108,74 @@ export function LoadingView({ message }: { message: string }) {
   );
 }
 
-// === Login view (email + 6-digit code) ===
+// === Login view (username + password) ===
 
 export function LoginView({
-  onSendCode,
-  onVerifyCode,
+  onSignIn,
 }: {
-  onSendCode: (email: string) => Promise<void>;
-  onVerifyCode: (email: string, code: string) => Promise<void>;
+  onSignIn: (username: string, password: string) => Promise<void>;
 }) {
-  const [email, setEmail] = useState('');
-  const [code, setCode] = useState('');
-  const [status, setStatus] = useState<
-    'idle' | 'sending' | 'sent' | 'verifying' | 'error'
-  >('idle');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [status, setStatus] = useState<'idle' | 'signing-in' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
 
-  async function sendCode(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault();
-    const trimmed = email.trim();
-    if (trimmed.length === 0) return;
-    setStatus('sending');
+    const u = username.trim();
+    if (u.length === 0 || password.length === 0) return;
+    setStatus('signing-in');
     setError(null);
     try {
-      await onSendCode(trimmed);
-      setStatus('sent');
+      await onSignIn(u, password);
+      // The auth state listener in App will pick up the new session.
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setStatus('error');
     }
   }
 
-  async function verifyCode(e: FormEvent) {
-    e.preventDefault();
-    const trimmedCode = code.trim();
-    if (trimmedCode.length === 0) return;
-    setStatus('verifying');
-    setError(null);
-    try {
-      await onVerifyCode(email.trim(), trimmedCode);
-      // The auth state listener in App will pick up the new session.
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setStatus('sent'); // back to code-entry so user can retry
-    }
-  }
-
   return (
     <main className="container login-view">
       <h1>lang-tool</h1>
-      <p className="muted">Sign in to access your library across devices.</p>
-      {status === 'sent' || status === 'verifying' ? (
-        <div className="login-sent">
-          <p>
-            <strong>Check your email.</strong> We sent a sign-in code to{' '}
-            <code>{email}</code>. Enter the 6-digit code below.
-          </p>
-          <p className="muted small">
-            You can also click the magic link in the email — but if your default
-            browser isn't where you want to use the app, type the code here
-            instead.
-          </p>
-          <form className="login-form" onSubmit={verifyCode}>
-            <label className="login-label">
-              <span>Code</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="123456"
-                autoComplete="one-time-code"
-                autoFocus
-                required
-              />
-            </label>
-            {error !== null && <div className="error-banner">{error}</div>}
-            <button
-              type="submit"
-              disabled={status === 'verifying' || code.length === 0}
-            >
-              {status === 'verifying' ? 'Verifying…' : 'Sign in'}
-            </button>
-            <button
-              type="button"
-              className="ghost"
-              onClick={() => {
-                setStatus('idle');
-                setCode('');
-                setError(null);
-              }}
-            >
-              Use a different email
-            </button>
-          </form>
-        </div>
-      ) : (
-        <form className="login-form" onSubmit={sendCode}>
-          <label className="login-label">
-            <span>Email</span>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              autoComplete="email"
-              required
-              autoFocus
-            />
-          </label>
-          {error !== null && <div className="error-banner">{error}</div>}
-          <button type="submit" disabled={status === 'sending' || email.trim().length === 0}>
-            {status === 'sending' ? 'Sending…' : 'Send sign-in code'}
-          </button>
-        </form>
-      )}
+      <p className="muted">Sign in with your username and password.</p>
+      <form className="login-form" onSubmit={submit}>
+        <label className="login-label">
+          <span>Username</span>
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="ARD or DPD"
+            autoComplete="username"
+            autoCapitalize="characters"
+            spellCheck={false}
+            required
+            autoFocus
+          />
+        </label>
+        <label className="login-label">
+          <span>Password</span>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            required
+          />
+        </label>
+        {error !== null && <div className="error-banner">{error}</div>}
+        <button
+          type="submit"
+          disabled={
+            status === 'signing-in' ||
+            username.trim().length === 0 ||
+            password.length === 0
+          }
+        >
+          {status === 'signing-in' ? 'Signing in…' : 'Sign in'}
+        </button>
+      </form>
     </main>
   );
 }

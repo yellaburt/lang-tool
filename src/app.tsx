@@ -9,12 +9,11 @@ import {
   fetchLearnerState,
   getCurrentSession,
   insertPassage,
-  signInWithEmail,
+  signInWithPassword,
   subscribeAuth,
   updatePassageContent,
   upsertReadingState,
   upsertSettings,
-  verifyEmailCode,
 } from './supabase';
 import {
   Chunk,
@@ -849,11 +848,8 @@ export function App() {
   if (authStatus === 'unauthenticated') {
     return (
       <LoginView
-        onSendCode={async (email) => {
-          await signInWithEmail(email);
-        }}
-        onVerifyCode={async (email, code) => {
-          await verifyEmailCode(email, code);
+        onSignIn={async (username, password) => {
+          await signInWithPassword(username, password);
         }}
       />
     );
