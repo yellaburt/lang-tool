@@ -128,20 +128,74 @@ export function splitSentences(rawText: string): ReadonlyArray<string> {
   return splitOnTerminalPunctuation(rawText);
 }
 
+// Tokens that look like sentence ends but aren't. Lowercased, no trailing dot.
+// English titles, Spanish titles, common Latin abbrev., and a few measurement
+// abbreviations Pete's reading material has hit.
+const ABBREVIATIONS: ReadonlySet<string> = new Set([
+  // English titles
+  'mr', 'mrs', 'ms', 'dr', 'st', 'sr', 'jr', 'prof', 'rev', 'hon', 'capt',
+  'sgt', 'lt', 'col', 'gen', 'rep', 'sen', 'gov', 'pres',
+  // Spanish titles
+  'sra', 'srta', 'sres', 'dra', 'don', 'dn', 'fr', 'sto', 'sta',
+  // Latin / common abbreviations
+  'etc', 'eg', 'ie', 'cf', 'vs', 'no', 'nos', 'vol', 'pp', 'ch', 'p',
+  'al', // "et al."
+  // Measurement / unit-ish
+  'oz', 'lb', 'lbs', 'kg', 'mg', 'ml', 'cm', 'mm', 'km', 'ft', 'in',
+]);
+
 function splitOnTerminalPunctuation(text: string): ReadonlyArray<string> {
   const result: string[] = [];
   let current = '';
-  for (const c of text) {
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i] ?? '';
     current += c;
-    if (c === '.' || c === '!' || c === '?' || c === '…') {
-      const trimmed = current.trim();
-      if (trimmed.length > 0) result.push(trimmed);
-      current = '';
+    if (c !== '.' && c !== '!' && c !== '?' && c !== '…') continue;
+
+    if (c === '.' && !shouldSplitAtPeriod(current, text, i)) {
+      continue;
     }
+
+    const trimmed = current.trim();
+    if (trimmed.length > 0) result.push(trimmed);
+    current = '';
   }
   const tail = current.trim();
   if (tail.length > 0) result.push(tail);
   return result;
+}
+
+// Heuristic: a period ends a sentence unless one of these holds:
+//   - The token immediately before the period is a known abbreviation
+//   - The token is a single letter (e.g. "U.S.", "D.A.")
+//   - The token is a bare number (e.g. "2.1 pounds")
+//   - The next non-whitespace character is lowercase (clear continuation)
+function shouldSplitAtPeriod(
+  current: string,
+  full: string,
+  periodIndex: number,
+): boolean {
+  // Find the token immediately preceding the period.
+  const beforeDot = current.slice(0, current.length - 1);
+  const tokenMatch = beforeDot.match(/(\S+)$/);
+  if (tokenMatch) {
+    const tokenRaw = tokenMatch[1] ?? '';
+    const token = tokenRaw.toLowerCase();
+    if (ABBREVIATIONS.has(token)) return false;
+    // Single letter abbreviations like the "U" / "S" / "A" inside "U.S.A."
+    if (/^[A-Za-zÁÉÍÓÚÑáéíóúñ]$/.test(tokenRaw)) return false;
+    // Numeric decimals: "2.1 pounds" — the token before the dot is "2".
+    if (/^\d+$/.test(tokenRaw)) return false;
+  }
+  // Look at the next non-whitespace character.
+  let j = periodIndex + 1;
+  while (j < full.length && /\s/.test(full[j] ?? '')) j++;
+  if (j < full.length) {
+    const next = full[j] ?? '';
+    // Continues mid-sentence (lowercase letter — clearly not a new sentence).
+    if (/[a-zñáéíóú]/.test(next)) return false;
+  }
+  return true;
 }
 
 function countWords(text: string): number {

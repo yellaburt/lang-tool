@@ -913,6 +913,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
               activeSide={activeSide}
               isPaused={isPaused}
               isFading={isFading}
+              dispatch={dispatch}
             />
           ))}
       </ol>
@@ -972,6 +973,7 @@ interface SentenceItemProps {
   readonly activeSide: 'tl' | 'en';
   readonly isPaused: boolean;
   readonly isFading: boolean;
+  readonly dispatch: (a: AppAction) => void;
 }
 
 function SentenceItem({
@@ -981,6 +983,7 @@ function SentenceItem({
   activeSide,
   isPaused,
   isFading,
+  dispatch,
 }: SentenceItemProps) {
   const hasCurrent = sentence.some((c) => c.index === currentChunkIndex);
 
@@ -1027,7 +1030,19 @@ function SentenceItem({
           );
         })}
       </div>
-      {isPaused && <div className="paused-badge">paused — space to advance</div>}
+      {isPaused && (
+        <button
+          type="button"
+          className="paused-badge"
+          onClick={(e) => {
+            e.currentTarget.blur();
+            dispatch({ kind: 'toggle-pause' });
+          }}
+          title="Resume / advance to next chunk"
+        >
+          paused — tap or space to advance
+        </button>
+      )}
     </li>
   );
 }

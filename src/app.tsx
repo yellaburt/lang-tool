@@ -575,13 +575,14 @@ function deriveTitle(text: string): string {
 // === Batching constants ===
 //
 // SENTENCES_PER_BATCH: how many source sentences to send per LLM round-trip.
-//   Smaller = faster first-batch latency, more total round-trips.
-//   Larger = slower first-batch, more efficient overall.
-//   4 is a reasonable starting point (~1 paragraph per batch).
+//   Smaller = faster first-batch latency, more total round-trips, AND
+//   better LLM alignment (it has less to track per call). Dropped from 4
+//   to 2 after observing the LLM occasionally smush two sentences' English
+//   glosses into one chunk on complex multi-clause batches.
 //
 // PREFETCH_LEAD_CHUNKS: when the user is within this many chunks of the end
 //   of currently-processed content, kick off the next batch in the background.
-const SENTENCES_PER_BATCH = 4;
+const SENTENCES_PER_BATCH = 2;
 const PREFETCH_LEAD_CHUNKS = 3;
 
 /**
