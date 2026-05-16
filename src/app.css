@@ -788,6 +788,15 @@ button.ghost {
   color: var(--text-secondary);
 }
 
+/* Hide the keyboard hints on touch devices (no hardware keyboard) and on
+   narrow viewports. The hint overlays the bottom of the content and the
+   keys aren't reachable anyway. */
+@media (hover: none) and (pointer: coarse), (max-width: 600px) {
+  .kbd-hint {
+    display: none;
+  }
+}
+
 kbd {
   display: inline-block;
   padding: 0.05rem 0.4rem;
