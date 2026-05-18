@@ -183,7 +183,7 @@ export function LoginView({
 // === Settings modal ===
 
 export function SettingsModal({ state, dispatch }: ViewProps) {
-  const allVoices = useAvailableVoices();
+  const { voices: allVoices } = useAvailableVoices();
   const spanishVoices = useMemo(
     () => allVoices.filter((v) => v.lang.toLowerCase().startsWith('es')),
     [allVoices],
@@ -449,9 +449,24 @@ function PassageRow({
   passage: Passage;
   dispatch: (a: AppAction) => void;
 }) {
-  const total = passage.chunks.length;
-  const read = Math.min(passage.lastReadChunkIndex, total);
-  const percent = total > 0 ? Math.round((read / total) * 100) : 0;
+  // Progress is measured in SENTENCES so the denominator is the full document
+  // (passage.sentenceCount) rather than just the chunks that have been
+  // translated so far. Otherwise a half-processed passage would always show
+  // 99% as the reader catches up to whatever the LLM produced last.
+  const totalSentences = passage.sentenceCount;
+  const isFinished =
+    passage.processingStatus.kind === 'complete' &&
+    passage.lastReadChunkIndex >= passage.chunks.length;
+  let sentencesRead = 0;
+  if (isFinished) {
+    sentencesRead = totalSentences;
+  } else if (passage.chunks.length > 0) {
+    const idx = Math.min(passage.lastReadChunkIndex, passage.chunks.length - 1);
+    const cur = passage.chunks[idx];
+    sentencesRead = cur ? cur.sentenceIndex : 0;
+  }
+  const percent =
+    totalSentences > 0 ? Math.round((sentencesRead / totalSentences) * 100) : 0;
   const date = new Date(passage.lastOpenedAt).toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
@@ -468,7 +483,7 @@ function PassageRow({
       >
         <span className="passage-title">{passage.title}</span>
         <span className="passage-meta">
-          {read} / {total} chunks · {percent}% · {date}
+          {percent}% · {date}
         </span>
       </button>
       <button
@@ -608,7 +623,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   const chosenSpanishVoice = state.learner.settings.ttsVoice;
   const chosenEnglishVoice = state.learner.settings.englishTtsVoice;
   const chosenReReadVoice = state.learner.settings.reReadVoice;
-  const allVoices = useAvailableVoices();
+  const { voices: allVoices, ready: voicesReady } = useAvailableVoices();
   const spanishVoices = useMemo(
     () => allVoices.filter((v) => v.lang.toLowerCase().startsWith('es')),
     [allVoices],
@@ -987,6 +1002,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
           voice={voice}
           spanishVoiceCount={spanishVoices.length}
           allVoices={allVoices}
+          voicesReady={voicesReady}
           dispatch={dispatch}
         />
       </div>
@@ -1148,7 +1164,7 @@ function SentenceItem({
           }}
           title="Resume from where you paused"
         >
-          paused — tap or space to resume
+          paused<span className="paused-hint"> — tap or space to resume</span>
         </button>
       )}
     </li>
@@ -1166,6 +1182,7 @@ interface ControlBarProps {
   readonly voice: SpeechSynthesisVoice | null;
   readonly spanishVoiceCount: number;
   readonly allVoices: ReadonlyArray<SpeechSynthesisVoice>;
+  readonly voicesReady: boolean;
   readonly dispatch: (a: AppAction) => void;
 }
 
@@ -1178,6 +1195,7 @@ function ControlBar({
   voice,
   spanishVoiceCount,
   allVoices,
+  voicesReady,
   dispatch,
 }: ControlBarProps) {
   return (
@@ -1302,6 +1320,7 @@ function ControlBar({
         voice={voice}
         spanishVoiceCount={spanishVoiceCount}
         allVoices={allVoices}
+        ready={voicesReady}
       />
     </div>
   );
@@ -1311,11 +1330,18 @@ function VoiceIndicator({
   voice,
   spanishVoiceCount,
   allVoices,
+  ready,
 }: {
   voice: SpeechSynthesisVoice | null;
   spanishVoiceCount: number;
   allVoices: ReadonlyArray<SpeechSynthesisVoice>;
+  ready: boolean;
 }) {
+  // While voices are still loading (briefly, on initial page load in Chrome),
+  // don't announce the negative. Just show a neutral "looking…" placeholder.
+  if (!ready) {
+    return <span className="voice-indicator">🔊 Looking for voices…</span>;
+  }
   if (voice === null && spanishVoiceCount === 0) {
     return (
       <div className="voice-indicator voice-warn">
@@ -1517,18 +1543,39 @@ function resolveVoice(
   return pickPreferredVoice(voices, fallbackLang);
 }
 
-function useAvailableVoices(): ReadonlyArray<SpeechSynthesisVoice> {
+interface VoicesState {
+  readonly voices: ReadonlyArray<SpeechSynthesisVoice>;
+  // ready=false during the brief window after page load when Chrome hasn't
+  // yet populated speechSynthesis.getVoices() — without this flag we'd flash
+  // a "no Spanish voice" warning even on devices that have voices installed.
+  // Flips to true on the first voiceschanged event, or after a 2s timeout.
+  readonly ready: boolean;
+}
+
+function useAvailableVoices(): VoicesState {
   const [voices, setVoices] = useState<ReadonlyArray<SpeechSynthesisVoice>>([]);
+  const [ready, setReady] = useState(false);
   useEffect(() => {
-    if (typeof speechSynthesis === 'undefined') return;
+    if (typeof speechSynthesis === 'undefined') {
+      setReady(true);
+      return;
+    }
     function load(): void {
-      setVoices(speechSynthesis.getVoices());
+      const v = speechSynthesis.getVoices();
+      setVoices(v);
+      if (v.length > 0) setReady(true);
     }
     load();
     speechSynthesis.addEventListener('voiceschanged', load);
-    return () => speechSynthesis.removeEventListener('voiceschanged', load);
+    // Fallback: if voiceschanged never fires (some platforms), give up
+    // looking after 2 seconds and report what we have.
+    const t = window.setTimeout(() => setReady(true), 2000);
+    return () => {
+      speechSynthesis.removeEventListener('voiceschanged', load);
+      window.clearTimeout(t);
+    };
   }, []);
-  return voices;
+  return { voices, ready };
 }
 
 function holdMsForChunk(

@@ -789,11 +789,15 @@ button.ghost {
   background: #ffe9a8;
 }
 
-/* Bigger tap target on touch devices. */
+/* Bigger tap target on touch devices, and hide the "tap or space" hint
+   since there's no keyboard. The button still works on tap. */
 @media (hover: none) and (pointer: coarse), (max-width: 600px) {
   .paused-badge {
     padding: 0.5rem 1rem;
     font-size: 0.95rem;
+  }
+  .paused-badge .paused-hint {
+    display: none;
   }
 }
 
