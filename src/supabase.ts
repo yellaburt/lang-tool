@@ -237,6 +237,10 @@ export async function fetchLearnerState(): Promise<LearnerState> {
 // useless to a reader; this surface is what shows up in the error banner.
 function humanizeChunkAndGlossError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
+  if (/at capacity|overloaded/i.test(msg)) {
+    // The server already crafted a user-ready message; pass through.
+    return msg;
+  }
   if (/401|unauthor/i.test(msg)) {
     return 'Your sign-in expired. Please sign out and back in.';
   }
@@ -256,6 +260,11 @@ function isAuthError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return /401|unauthor/i.test(msg);
 }
+
+// Marker thrown by callChunkAndGloss to signal that the retry loop should
+// stop — used when the failure won't be resolved by retrying (e.g. Anthropic
+// is overloaded, so the same call will fail the same way).
+class NonRetryableError extends Error {}
 
 export async function callChunkAndGloss(text: string): Promise<ReadonlyArray<ChunkAndGloss>> {
   // Retry transient failures (EarlyDrop, network blips, 5xx) silently. Most
@@ -279,10 +288,18 @@ export async function callChunkAndGloss(text: string): Promise<ReadonlyArray<Chu
         if (isAuthError(error)) break;
         continue;
       }
-      const payload = data as { chunks?: ReadonlyArray<ChunkAndGloss>; error?: string };
+      const payload = data as {
+        chunks?: ReadonlyArray<ChunkAndGloss>;
+        error?: string;
+        errorKind?: string;
+      };
       if (payload.error) {
-        // App-level error from the function (e.g. Anthropic refused content).
-        // Don't retry these — they're deterministic.
+        // App-level error from the function. errorKind 'overloaded' means
+        // Anthropic is at capacity — retrying within seconds won't help, so
+        // we break out and surface the message immediately.
+        if (payload.errorKind === 'overloaded') {
+          throw new NonRetryableError(payload.error);
+        }
         throw new Error(payload.error);
       }
       if (!payload.chunks || payload.chunks.length === 0) {
@@ -293,9 +310,10 @@ export async function callChunkAndGloss(text: string): Promise<ReadonlyArray<Chu
       return payload.chunks;
     } catch (e) {
       lastErr = e;
+      if (e instanceof NonRetryableError) break;
       if (isAuthError(e)) break;
-      // Other errors (incl. "App-level error from function") flow through.
-      // We retry once more in case the body parse itself was a flake.
+      // Other errors flow through — retry once more in case the body parse
+      // itself was a flake.
     }
   }
   // Log the technical detail for debugging, then surface the friendly one.

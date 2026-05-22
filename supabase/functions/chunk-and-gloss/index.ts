@@ -165,13 +165,22 @@ Deno.serve(async (req) => {
       // Primary: Haiku — fast and cheap, handles ~95%+ of batches.
       result = await callModel(client, text, PRIMARY_MODEL, PRIMARY_TIMEOUT_MS);
     } catch (primaryErr) {
-      // Haiku hung, refused, or returned empty/malformed output. Sonnet is
-      // more capable of handling nuanced literary or historical content
-      // (Holocaust memoir, war reporting, etc.) that Haiku gets cautious
-      // about — and it generally returns valid tool calls more reliably.
-      console.warn(
-        `Haiku failed (${primaryErr instanceof Error ? primaryErr.message : primaryErr}); falling back to Sonnet`,
-      );
+      const primaryMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+      // If Anthropic itself is overloaded (HTTP 529), Sonnet hits the same
+      // backend and won't save us — short-circuit so the user sees a
+      // specific "service overloaded" message in a few seconds instead of
+      // waiting another 30s for Sonnet to also fail.
+      if (isOverloadError(primaryErr)) {
+        console.warn(`Anthropic overloaded on Haiku; skipping Sonnet fallback`);
+        // Return 200 with a structured error so supabase-js exposes the
+        // body to the client (non-2xx hides it). The client treats
+        // payload.error as a non-retryable failure with this exact phrasing.
+        return jsonResponse({
+          error: 'Anthropic is at capacity right now. Please wait a few minutes and try again.',
+          errorKind: 'overloaded',
+        });
+      }
+      console.warn(`Haiku failed (${primaryMsg}); falling back to Sonnet`);
       result = await callModel(client, text, FALLBACK_MODEL, FALLBACK_TIMEOUT_MS);
     }
     return jsonResponse({
@@ -181,6 +190,16 @@ Deno.serve(async (req) => {
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Unknown error';
+    // Log so we can see in Supabase logs which error escaped (Sonnet
+    // timeout, refusal, malformed output, etc.) — previously only the
+    // Haiku-failed warning showed up.
+    console.error(`chunk-and-gloss outer failure: ${message}`);
+    if (isOverloadError(e)) {
+      return jsonResponse({
+        error: 'Anthropic is at capacity right now. Please wait a few minutes and try again.',
+        errorKind: 'overloaded',
+      });
+    }
     return jsonResponse({ error: `Anthropic call failed: ${message}` }, 502);
   }
 });
@@ -264,4 +283,13 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
       setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
     ),
   ]);
+}
+
+// Detect Anthropic's HTTP 529 overloaded_error. The SDK throws an error
+// whose .message contains the status code and body. We don't depend on
+// SDK-specific shapes since the JSON body is always included in .message.
+function isOverloadError(err: unknown): boolean {
+  if (!err) return false;
+  const msg = err instanceof Error ? err.message : String(err);
+  return /\b529\b|overloaded_error|"Overloaded"/i.test(msg);
 }
