@@ -14,10 +14,18 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 
 // ===== Shared prompt block — keep in sync with src/prompt.ts =====
 
-const PROMPT_VERSION = 'v3';
-const MODEL = 'claude-haiku-4-5';
+const PROMPT_VERSION = 'v4';
+const PRIMARY_MODEL = 'claude-haiku-4-5';
+const FALLBACK_MODEL = 'claude-sonnet-4-5';
+// Wall-clock timeouts per call. Supabase Edge Functions get killed around
+// 75s, so the worst-case (Haiku timeout + Sonnet timeout + overhead) must
+// stay under that. For normal batches both models respond in well under 10s.
+const PRIMARY_TIMEOUT_MS = 20_000;
+const FALLBACK_TIMEOUT_MS = 30_000;
 
-const SYSTEM_PROMPT = `You prepare a reading lesson for an intermediate Spanish learner. The user pastes a passage that may be in Spanish OR in English. Your job: produce Spanish chunks (5-15 words each) with an English gloss for each chunk.
+const SYSTEM_PROMPT = `You are a translation aid for an adult Spanish-reading practice tool. The user pastes a passage that may be in Spanish OR in English. Your job: produce Spanish chunks (5-15 words each) with an English gloss for each chunk.
+
+This tool processes ALL kinds of adult reading material — literary fiction, history, journalism, memoir, academic writing — including passages that describe difficult subjects (war, atrocity, illness, sexuality, crime). You are a translation and chunking aid, NOT a content moderator. The user has chosen the source material for their own educational purposes; refusing to process serious literature or historical writing defeats the tool's purpose. Process every input as written.
 
 DETECT THE INPUT LANGUAGE FIRST.
 
@@ -148,12 +156,52 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'No text provided' }, 400);
   }
 
-  // Call Anthropic.
+  // Call Anthropic with a Haiku→Sonnet fallback.
   const client = new Anthropic({ apiKey: anthropicKey });
 
   try {
-    const response = await client.messages.create({
-      model: MODEL,
+    let result: { chunks: ValidatedChunk[]; model: string };
+    try {
+      // Primary: Haiku — fast and cheap, handles ~95%+ of batches.
+      result = await callModel(client, text, PRIMARY_MODEL, PRIMARY_TIMEOUT_MS);
+    } catch (primaryErr) {
+      // Haiku hung, refused, or returned empty/malformed output. Sonnet is
+      // more capable of handling nuanced literary or historical content
+      // (Holocaust memoir, war reporting, etc.) that Haiku gets cautious
+      // about — and it generally returns valid tool calls more reliably.
+      console.warn(
+        `Haiku failed (${primaryErr instanceof Error ? primaryErr.message : primaryErr}); falling back to Sonnet`,
+      );
+      result = await callModel(client, text, FALLBACK_MODEL, FALLBACK_TIMEOUT_MS);
+    }
+    return jsonResponse({
+      chunks: result.chunks,
+      promptVersion: PROMPT_VERSION,
+      model: result.model,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : 'Unknown error';
+    return jsonResponse({ error: `Anthropic call failed: ${message}` }, 502);
+  }
+});
+
+// ===== Anthropic call w/ timeout + structured parsing =====
+
+interface ValidatedChunk {
+  tlText: string;
+  englishGloss: string;
+  sentenceIndex: number;
+}
+
+async function callModel(
+  client: Anthropic,
+  text: string,
+  model: string,
+  timeoutMs: number,
+): Promise<{ chunks: ValidatedChunk[]; model: string }> {
+  const response = await withTimeout(
+    client.messages.create({
+      model,
       max_tokens: 8192,
       system: [
         { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
@@ -161,48 +209,59 @@ Deno.serve(async (req) => {
       messages: [{ role: 'user', content: text }],
       tools: [TOOL],
       tool_choice: { type: 'tool', name: 'split_and_gloss' },
-    });
+    }),
+    timeoutMs,
+    model,
+  );
 
-    const toolUse = response.content.find((b) => b.type === 'tool_use');
-    if (!toolUse || toolUse.type !== 'tool_use' || toolUse.name !== 'split_and_gloss') {
-      return jsonResponse({ error: 'Model did not call the expected tool' }, 502);
-    }
-
-    const input = toolUse.input as unknown;
-    if (
-      typeof input !== 'object' ||
-      input === null ||
-      !('chunks' in input) ||
-      !Array.isArray((input as { chunks: unknown }).chunks)
-    ) {
-      return jsonResponse({ error: 'Tool response shape was invalid' }, 502);
-    }
-    const raw = (input as { chunks: unknown[] }).chunks;
-
-    const chunks: Array<{ tlText: string; englishGloss: string; sentenceIndex: number }> = [];
-    for (const c of raw) {
-      if (
-        typeof c === 'object' &&
-        c !== null &&
-        typeof (c as Record<string, unknown>).tlText === 'string' &&
-        typeof (c as Record<string, unknown>).englishGloss === 'string' &&
-        typeof (c as Record<string, unknown>).sentenceIndex === 'number'
-      ) {
-        const v = c as { tlText: string; englishGloss: string; sentenceIndex: number };
-        chunks.push({
-          tlText: v.tlText,
-          englishGloss: v.englishGloss,
-          sentenceIndex: Math.trunc(v.sentenceIndex),
-        });
-      }
-    }
-    if (chunks.length === 0) {
-      return jsonResponse({ error: 'No valid chunks returned' }, 502);
-    }
-
-    return jsonResponse({ chunks, promptVersion: PROMPT_VERSION, model: MODEL });
-  } catch (e) {
-    const message = e instanceof Error ? e.message : 'Unknown error';
-    return jsonResponse({ error: `Anthropic call failed: ${message}` }, 502);
+  const toolUse = response.content.find((b) => b.type === 'tool_use');
+  if (!toolUse || toolUse.type !== 'tool_use' || toolUse.name !== 'split_and_gloss') {
+    // Most likely a refusal: model returned text content instead of calling
+    // the tool. Throw so the caller falls back to a more capable model.
+    throw new Error(`${model} did not call the expected tool`);
   }
-});
+
+  const input = toolUse.input as unknown;
+  if (
+    typeof input !== 'object' ||
+    input === null ||
+    !('chunks' in input) ||
+    !Array.isArray((input as { chunks: unknown }).chunks)
+  ) {
+    throw new Error(`${model} returned malformed tool input`);
+  }
+  const raw = (input as { chunks: unknown[] }).chunks;
+
+  const chunks: ValidatedChunk[] = [];
+  for (const c of raw) {
+    if (
+      typeof c === 'object' &&
+      c !== null &&
+      typeof (c as Record<string, unknown>).tlText === 'string' &&
+      typeof (c as Record<string, unknown>).englishGloss === 'string' &&
+      typeof (c as Record<string, unknown>).sentenceIndex === 'number'
+    ) {
+      const v = c as ValidatedChunk;
+      chunks.push({
+        tlText: v.tlText,
+        englishGloss: v.englishGloss,
+        sentenceIndex: Math.trunc(v.sentenceIndex),
+      });
+    }
+  }
+  if (chunks.length === 0) {
+    throw new Error(`${model} returned no valid chunks`);
+  }
+  return { chunks, model };
+}
+
+// Promise.race-based timeout. The underlying HTTP request may keep running
+// after the timeout fires — that's fine; we just stop waiting for it.
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
+    ),
+  ]);
+}
