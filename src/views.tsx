@@ -3,9 +3,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { assertNever } from './core';
 import { hasApiKey } from './llm';
 import { getCurrentSession, signOut } from './supabase';
-import { Chunk, EmphasisStyle, Passage, Settings, ThemeName } from './types';
+import { Chunk, ChunkId, EmphasisStyle, Passage, Settings, ThemeName } from './types';
 import { buildEmptyPassage } from './app';
-import type { AppAction, AppState } from './app';
+import type { AppAction, AppState, WordLookupUiState } from './app';
 
 // === Shared view props ===
 
@@ -1116,6 +1116,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
               activeSide={activeSide}
               isPaused={isPaused}
               isFading={isFading}
+              wordLookup={state.ui.wordLookup}
               dispatch={dispatch}
             />
           ))}
@@ -1190,6 +1191,7 @@ interface SentenceItemProps {
   readonly activeSide: 'tl' | 'en';
   readonly isPaused: boolean;
   readonly isFading: boolean;
+  readonly wordLookup: WordLookupUiState | null;
   readonly dispatch: (a: AppAction) => void;
 }
 
@@ -1200,23 +1202,36 @@ function SentenceItem({
   activeSide,
   isPaused,
   isFading,
+  wordLookup,
   dispatch,
 }: SentenceItemProps) {
   const hasCurrent = sentence.some((c) => c.index === currentChunkIndex);
+  const lookupInThisSentence =
+    wordLookup !== null && sentence.some((c) => c.id === wordLookup.chunkId);
 
   if (!hasCurrent) {
     // Past sentence: flowing Spanish paragraph + flowing English paragraph.
-    // Sentence-as-whole coherence is preserved; the learner has already
-    // processed this content and doesn't need chunk-level alignment.
-    const tlText = sentence.map((c) => c.tlText).join(' ');
+    // Each chunk still renders separately under the hood so that taps on
+    // words attribute to the correct chunkId; the spaces between chunks
+    // make them visually contiguous.
     const enText = sentence
       .filter((c) => c.englishGloss !== null && c.englishGloss.length > 0)
       .map((c) => c.englishGloss)
       .join(' ');
     return (
       <li className="sentence past">
-        <div className="tl">{tlText}</div>
+        <div className="tl">
+          {sentence.map((c, i) => (
+            <span key={c.id}>
+              {i > 0 && ' '}
+              <ClickableSpanish text={c.tlText} chunkId={c.id} dispatch={dispatch} />
+            </span>
+          ))}
+        </div>
         {enText.length > 0 && <div className="en">{enText}</div>}
+        {lookupInThisSentence && wordLookup && (
+          <WordLookupPanel lookup={wordLookup} dispatch={dispatch} />
+        )}
       </li>
     );
   }
@@ -1241,12 +1256,17 @@ function SentenceItem({
           if (isCurrentSub && isFading) rowCls += ' fading';
           return (
             <div key={c.id} className={rowCls}>
-              <div className="pair-tl">{c.tlText}</div>
+              <div className="pair-tl">
+                <ClickableSpanish text={c.tlText} chunkId={c.id} dispatch={dispatch} />
+              </div>
               <div className="pair-en">{showGloss ? c.englishGloss : ''}</div>
             </div>
           );
         })}
       </div>
+      {lookupInThisSentence && wordLookup && (
+        <WordLookupPanel lookup={wordLookup} dispatch={dispatch} />
+      )}
       {isPaused && (
         <button
           type="button"
@@ -1587,6 +1607,123 @@ function useAvailableVoices(): VoicesState {
     };
   }, []);
   return { voices, ready };
+}
+
+// === Clickable Spanish + word lookup panel ===
+
+// Tokenize a Spanish chunk into alternating word/non-word segments. Words
+// are letters (including accented Spanish letters + ñ); non-word segments
+// are punctuation/whitespace. We preserve everything so re-joining is
+// lossless and visual flow is unchanged.
+function tokenizeSpanish(text: string): Array<{ text: string; isWord: boolean }> {
+  const tokens: Array<{ text: string; isWord: boolean }> = [];
+  const re = /([A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+)|([^A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m[1] !== undefined) tokens.push({ text: m[1], isWord: true });
+    else if (m[2] !== undefined) tokens.push({ text: m[2], isWord: false });
+  }
+  return tokens;
+}
+
+function ClickableSpanish({
+  text,
+  chunkId,
+  dispatch,
+}: {
+  text: string;
+  chunkId: ChunkId;
+  dispatch: (a: AppAction) => void;
+}) {
+  const tokens = useMemo(() => tokenizeSpanish(text), [text]);
+  return (
+    <>
+      {tokens.map((t, i) =>
+        t.isWord ? (
+          <button
+            key={i}
+            type="button"
+            className="word-clickable"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.currentTarget.blur();
+              dispatch({ kind: 'lookup-word', word: t.text, chunkId });
+            }}
+          >
+            {t.text}
+          </button>
+        ) : (
+          <span key={i}>{t.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+function WordLookupPanel({
+  lookup,
+  dispatch,
+}: {
+  lookup: WordLookupUiState;
+  dispatch: (a: AppAction) => void;
+}) {
+  return (
+    <div className={`word-lookup-panel kind-${lookup.kind}`} role="dialog" aria-label="Word definition">
+      <div className="lookup-header">
+        <span className="lookup-word">{lookup.word}</span>
+        <button
+          type="button"
+          className="lookup-dismiss"
+          onClick={(e) => {
+            e.currentTarget.blur();
+            dispatch({ kind: 'dismiss-lookup' });
+          }}
+          aria-label="Close definition"
+          title="Close (audio stays paused — hit Resume to continue)"
+        >
+          ×
+        </button>
+      </div>
+      {lookup.kind === 'loading' && (
+        <div className="lookup-body lookup-loading">Looking up…</div>
+      )}
+      {lookup.kind === 'error' && (
+        <div className="lookup-body lookup-error">{lookup.message}</div>
+      )}
+      {lookup.kind === 'ready' && (
+        <div className="lookup-body">
+          <div className="lookup-meaning">{lookup.definition.meaning}</div>
+          {lookup.definition.verb && (
+            <div className="lookup-verb">
+              <div>
+                <strong>{lookup.definition.verb.infinitive}</strong>
+                {' — '}
+                <em>{lookup.definition.verb.infinitiveEnglish}</em>
+              </div>
+              <div className="muted small">
+                {lookup.definition.verb.tense}
+                {' · '}
+                {lookup.definition.verb.mood}
+                {' · '}
+                {lookup.definition.verb.person}
+              </div>
+            </div>
+          )}
+          {lookup.definition.idiom && (
+            <div className="lookup-idiom">
+              <div>
+                <strong>{lookup.definition.idiom.expression}</strong>
+              </div>
+              <div>{lookup.definition.idiom.meaning}</div>
+            </div>
+          )}
+          {lookup.definition.notes && (
+            <div className="lookup-notes muted small">{lookup.definition.notes}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function holdMsForChunk(

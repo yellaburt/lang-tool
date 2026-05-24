@@ -769,6 +769,104 @@ button.ghost {
   }
 }
 
+/* ===== Clickable Spanish words ===== */
+
+/* The word button itself: must be visually identical to surrounding text
+   when idle so reading isn't disrupted, but tappable with a clear hover
+   indicator. We override the browser button defaults aggressively. */
+.word-clickable {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 2px;
+  /* Make the touch target slightly bigger than the visible text without
+     affecting line layout. */
+  padding: 0 1px;
+}
+
+.word-clickable:hover,
+.word-clickable:focus-visible {
+  background: var(--word-hover-bg, rgba(0, 100, 200, 0.12));
+  outline: none;
+}
+
+.word-clickable:active {
+  background: var(--word-hover-bg, rgba(0, 100, 200, 0.2));
+}
+
+/* ===== Word lookup panel ===== */
+
+.word-lookup-panel {
+  margin: 0.75rem 0 0.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface-bg, #f7f7f5);
+  border: 1px solid var(--surface-border, #ddd);
+  border-left: 3px solid #5b8def;
+  border-radius: 4px;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.word-lookup-panel.kind-loading {
+  border-left-color: #aaa;
+}
+
+.word-lookup-panel.kind-error {
+  border-left-color: #c44;
+  background: #fff4f4;
+}
+
+.lookup-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.4rem;
+}
+
+.lookup-word {
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+.lookup-dismiss {
+  background: none;
+  border: none;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--text-secondary, #777);
+  cursor: pointer;
+  padding: 0 0.3rem;
+  font-family: inherit;
+}
+
+.lookup-dismiss:hover {
+  color: var(--text, #000);
+}
+
+.lookup-body > * + * {
+  margin-top: 0.5rem;
+}
+
+.lookup-loading,
+.lookup-error {
+  font-style: italic;
+}
+
+.lookup-meaning {
+  font-size: 1.05rem;
+}
+
+.lookup-verb,
+.lookup-idiom {
+  padding: 0.4rem 0.5rem;
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 3px;
+}
+
 /* ===== Misc ===== */
 
 .paused-badge {
