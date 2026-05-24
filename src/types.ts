@@ -6,6 +6,28 @@ export type ReviewEventId = string & { readonly __brand: 'ReviewEventId' };
 
 export type LanguageCode = 'es' | 'en';
 
+// Contextual word definition returned by the define-word Edge Function.
+// `meaning` is always present; `verb` and `idiom` only when applicable.
+export interface WordDefinition {
+  readonly meaning: string;
+  readonly verb?: VerbInfo;
+  readonly idiom?: IdiomInfo;
+  readonly notes?: string;
+}
+
+export interface VerbInfo {
+  readonly infinitive: string;
+  readonly infinitiveEnglish: string;
+  readonly tense: string;
+  readonly mood: string;
+  readonly person: string;
+}
+
+export interface IdiomInfo {
+  readonly expression: string;
+  readonly meaning: string;
+}
+
 export type ProcessingStatus =
   | { readonly kind: 'in-progress'; readonly processedSentenceCount: number }
   | { readonly kind: 'complete' }

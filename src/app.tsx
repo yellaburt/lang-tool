@@ -6,6 +6,7 @@ import { loadLearnerState } from './storage';
 import {
   AuthSession,
   deletePassage as supabaseDeletePassage,
+  callDefineWord,
   fetchLearnerState,
   fetchPassages,
   getCurrentSession,
@@ -28,6 +29,7 @@ import {
   Settings,
   ThemeName,
   VocabItemId,
+  WordDefinition,
 } from './types';
 import {
   LibraryView,
@@ -65,7 +67,26 @@ export interface UiState {
   // The passage currently being fetched in the background (one in flight at a
   // time). Lets the batch-fetch effect avoid kicking off concurrent fetches.
   readonly activeBatchFetch: PassageId | null;
+  // Active word lookup, if any. Tapping a word sets this; dismissing clears
+  // it. We pause audio and surface a definition panel below the chunk the
+  // word came from.
+  readonly wordLookup: WordLookupUiState | null;
 }
+
+export type WordLookupUiState =
+  | { readonly kind: 'loading'; readonly word: string; readonly chunkId: ChunkId }
+  | {
+      readonly kind: 'ready';
+      readonly word: string;
+      readonly chunkId: ChunkId;
+      readonly definition: WordDefinition;
+    }
+  | {
+      readonly kind: 'error';
+      readonly word: string;
+      readonly chunkId: ChunkId;
+      readonly message: string;
+    };
 
 export interface AppState {
   readonly learner: LearnerState;
@@ -119,7 +140,21 @@ export type AppAction =
   | { readonly kind: 'set-tts-voice'; readonly voiceName: string | null }
   | { readonly kind: 'set-english-tts-voice'; readonly voiceName: string | null }
   | { readonly kind: 'toggle-settings' }
-  | { readonly kind: 'reset-to-paste' };
+  | { readonly kind: 'reset-to-paste' }
+  | { readonly kind: 'lookup-word'; readonly word: string; readonly chunkId: ChunkId }
+  | {
+      readonly kind: 'lookup-word-result';
+      readonly word: string;
+      readonly chunkId: ChunkId;
+      readonly definition: WordDefinition;
+    }
+  | {
+      readonly kind: 'lookup-word-error';
+      readonly word: string;
+      readonly chunkId: ChunkId;
+      readonly message: string;
+    }
+  | { readonly kind: 'dismiss-lookup' };
 
 // Build an empty UiState; the learner state is supplied by the caller so the
 // same shape works whether we're starting fresh or hydrating from storage.
@@ -135,6 +170,7 @@ function freshUiState(view: View): UiState {
     processingError: null,
     settingsOpen: false,
     activeBatchFetch: null,
+    wordLookup: null,
   };
 }
 
@@ -626,6 +662,75 @@ function reducer(state: AppState, action: AppAction): AppState {
         },
       };
 
+    case 'lookup-word': {
+      // Pause audio immediately and mark the lookup as in flight. The
+      // effect (see ReadingView) calls callDefineWord and dispatches the
+      // result. If the user clicks another word while one is loading, the
+      // newer lookup replaces the older — the older one's result is
+      // discarded by the result reducer's identity check.
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          isPaused: true,
+          wordLookup: { kind: 'loading', word: action.word, chunkId: action.chunkId },
+        },
+      };
+    }
+
+    case 'lookup-word-result': {
+      const lu = state.ui.wordLookup;
+      if (
+        !lu ||
+        lu.kind !== 'loading' ||
+        lu.word !== action.word ||
+        lu.chunkId !== action.chunkId
+      ) {
+        return state; // Stale result for a lookup we already replaced/dismissed.
+      }
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          wordLookup: {
+            kind: 'ready',
+            word: action.word,
+            chunkId: action.chunkId,
+            definition: action.definition,
+          },
+        },
+      };
+    }
+
+    case 'lookup-word-error': {
+      const lu = state.ui.wordLookup;
+      if (
+        !lu ||
+        lu.kind !== 'loading' ||
+        lu.word !== action.word ||
+        lu.chunkId !== action.chunkId
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          wordLookup: {
+            kind: 'error',
+            word: action.word,
+            chunkId: action.chunkId,
+            message: action.message,
+          },
+        },
+      };
+    }
+
+    case 'dismiss-lookup':
+      // Note: we don't auto-resume. Pete chose "stay paused" — user hits
+      // Resume manually to continue reading.
+      return { ...state, ui: { ...state.ui, wordLookup: null } };
+
     default:
       return assertNever(action);
   }
@@ -835,6 +940,63 @@ export function App() {
       cancelled = true;
     };
   }, [currentView, libraryStatus]);
+
+  // Word-lookup effect: when a tap registers (wordLookup goes from null to
+  // {kind:'loading'}), call the define-word Edge Function and dispatch the
+  // result. The reducer ignores results that don't match the current
+  // in-flight lookup, so racing taps are safe.
+  const wordLookup = state.ui.wordLookup;
+  const passages = state.learner.passages;
+  useEffect(() => {
+    if (!wordLookup || wordLookup.kind !== 'loading') return;
+    let cancelled = false;
+    void (async () => {
+      // Find the chunk text for the chunkId. Search across all loaded
+      // passages — usually the chunk is in state.learner.passages[currentPassageId]
+      // but the cross-passage search is cheap and avoids coupling to UI state.
+      let chunkText: string | null = null;
+      for (const passage of Object.values(passages)) {
+        const c = passage.chunks.find((ch) => ch.id === wordLookup.chunkId);
+        if (c) {
+          chunkText = c.tlText;
+          break;
+        }
+      }
+      if (chunkText === null) {
+        if (!cancelled) {
+          dispatch({
+            kind: 'lookup-word-error',
+            word: wordLookup.word,
+            chunkId: wordLookup.chunkId,
+            message: "Couldn't find that chunk.",
+          });
+        }
+        return;
+      }
+      try {
+        const definition = await callDefineWord(wordLookup.word, chunkText);
+        if (cancelled) return;
+        dispatch({
+          kind: 'lookup-word-result',
+          word: wordLookup.word,
+          chunkId: wordLookup.chunkId,
+          definition,
+        });
+      } catch (e) {
+        if (cancelled) return;
+        const msg = e instanceof Error ? e.message : String(e);
+        dispatch({
+          kind: 'lookup-word-error',
+          word: wordLookup.word,
+          chunkId: wordLookup.chunkId,
+          message: msg,
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [wordLookup, passages]);
 
   // Apply theme + emphasis-style as data attributes on the root element.
   // CSS variables and emphasis rules key off these.

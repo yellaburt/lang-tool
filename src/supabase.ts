@@ -7,6 +7,7 @@ import {
   Passage,
   PassageId,
   Settings,
+  WordDefinition,
 } from './types';
 import { defaultSettings, emptyLearnerState } from './core';
 
@@ -319,4 +320,34 @@ export async function callChunkAndGloss(text: string): Promise<ReadonlyArray<Chu
   // Log the technical detail for debugging, then surface the friendly one.
   console.error('chunk-and-gloss failed after retries:', lastErr);
   throw new Error(humanizeChunkAndGlossError(lastErr));
+}
+
+// === Edge Function: define-word ===
+
+export async function callDefineWord(
+  word: string,
+  chunkText: string,
+  language: string = 'es',
+): Promise<WordDefinition> {
+  const { data, error } = await supabase.functions.invoke('define-word', {
+    body: { word, chunkText, language },
+  });
+  if (error) {
+    console.error('define-word transport error:', error);
+    throw new Error(humanizeChunkAndGlossError(error));
+  }
+  const payload = data as {
+    definition?: WordDefinition;
+    error?: string;
+    errorKind?: string;
+  };
+  if (payload.error) {
+    // 'overloaded' is informational only here — we don't retry word lookups,
+    // the user will tap again if they care. Just surface the message.
+    throw new Error(payload.error);
+  }
+  if (!payload.definition) {
+    throw new Error('No definition returned.');
+  }
+  return payload.definition;
 }
