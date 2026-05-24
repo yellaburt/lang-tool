@@ -183,7 +183,7 @@ export function LoginView({
 // === Settings modal ===
 
 export function SettingsModal({ state, dispatch }: ViewProps) {
-  const { voices: allVoices } = useAvailableVoices();
+  const { voices: allVoices, ready: voicesReady } = useAvailableVoices();
   const spanishVoices = useMemo(
     () => allVoices.filter((v) => v.lang.toLowerCase().startsWith('es')),
     [allVoices],
@@ -191,6 +191,17 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
   const englishVoices = useMemo(
     () => allVoices.filter((v) => v.lang.toLowerCase().startsWith('en')),
     [allVoices],
+  );
+  // Resolve the active Spanish voice the same way ReadingView does, so the
+  // VoiceIndicator in this modal reflects what would actually play.
+  const activeSpanishVoice = useMemo(
+    () =>
+      resolveVoice(
+        spanishVoices,
+        state.learner.settings.ttsVoice,
+        dialectToLang(state.learner.settings.dialect),
+      ),
+    [spanishVoices, state.learner.settings.ttsVoice, state.learner.settings.dialect],
   );
 
   // Escape closes the modal.
@@ -232,7 +243,91 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
         </header>
 
         <section className="modal-section">
+          <h3>Pace</h3>
+          <label className="pace" title="How fast Spanish is read aloud">
+            <span className="pace-label">Spanish speech</span>
+            <input
+              type="range"
+              min={0.5}
+              max={2.0}
+              step={0.1}
+              value={settings.speechPaceMultiplier}
+              onChange={(e) =>
+                dispatch({
+                  kind: 'set-speech-pace',
+                  multiplier: Number(e.target.value),
+                })
+              }
+            />
+            <span className="pace-value">
+              {settings.speechPaceMultiplier.toFixed(1)}×
+            </span>
+          </label>
+          <label
+            className={settings.englishTtsEnabled ? 'pace dimmed' : 'pace'}
+            title={
+              settings.englishTtsEnabled
+                ? 'Inactive while English audio is on — the audio sets the pace.'
+                : 'How long the English stays on screen before advancing'
+            }
+          >
+            <span className="pace-label">Reading hold</span>
+            <input
+              type="range"
+              min={0.5}
+              max={2.0}
+              step={0.1}
+              value={settings.readPaceMultiplier}
+              disabled={settings.englishTtsEnabled}
+              onChange={(e) =>
+                dispatch({
+                  kind: 'set-read-pace',
+                  multiplier: Number(e.target.value),
+                })
+              }
+            />
+            <span className="pace-value">
+              {settings.readPaceMultiplier.toFixed(1)}×
+            </span>
+          </label>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={settings.englishTtsEnabled}
+              onChange={() => dispatch({ kind: 'toggle-english-tts' })}
+            />
+            <span>Read the English gloss aloud</span>
+          </label>
+          <label className="pace" title="How fast English is read aloud">
+            <span className="pace-label">English speech</span>
+            <input
+              type="range"
+              min={0.5}
+              max={2.0}
+              step={0.1}
+              value={settings.englishSpeechPaceMultiplier}
+              disabled={!settings.englishTtsEnabled}
+              onChange={(e) =>
+                dispatch({
+                  kind: 'set-english-speech-pace',
+                  multiplier: Number(e.target.value),
+                })
+              }
+            />
+            <span className="pace-value">
+              {settings.englishSpeechPaceMultiplier.toFixed(1)}×
+            </span>
+          </label>
+        </section>
+
+        <section className="modal-section">
           <h3>Voices</h3>
+          <VoiceIndicator
+            voice={activeSpanishVoice}
+            spanishVoiceCount={spanishVoices.length}
+            allVoices={allVoices}
+            ready={voicesReady}
+          />
           <VoiceSelect
             label="Spanish voice"
             value={settings.ttsVoice}
@@ -1002,18 +1097,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
           </div>
         </header>
 
-        <ControlBar
-          isPaused={isPaused}
-          speechPaceMultiplier={speechPaceMultiplier}
-          readPaceMultiplier={readPaceMultiplier}
-          englishTtsEnabled={englishTtsEnabled}
-          englishSpeechPaceMultiplier={englishSpeechPaceMultiplier}
-          voice={voice}
-          spanishVoiceCount={spanishVoices.length}
-          allVoices={allVoices}
-          voicesReady={voicesReady}
-          dispatch={dispatch}
-        />
+        <ControlBar isPaused={isPaused} dispatch={dispatch} />
       </div>
 
       <ol
@@ -1184,29 +1268,10 @@ function SentenceItem({
 
 interface ControlBarProps {
   readonly isPaused: boolean;
-  readonly speechPaceMultiplier: number;
-  readonly readPaceMultiplier: number;
-  readonly englishTtsEnabled: boolean;
-  readonly englishSpeechPaceMultiplier: number;
-  readonly voice: SpeechSynthesisVoice | null;
-  readonly spanishVoiceCount: number;
-  readonly allVoices: ReadonlyArray<SpeechSynthesisVoice>;
-  readonly voicesReady: boolean;
   readonly dispatch: (a: AppAction) => void;
 }
 
-function ControlBar({
-  isPaused,
-  speechPaceMultiplier,
-  readPaceMultiplier,
-  englishTtsEnabled,
-  englishSpeechPaceMultiplier,
-  voice,
-  spanishVoiceCount,
-  allVoices,
-  voicesReady,
-  dispatch,
-}: ControlBarProps) {
+function ControlBar({ isPaused, dispatch }: ControlBarProps) {
   return (
     <div className="control-bar">
       <button
@@ -1265,72 +1330,6 @@ function ControlBar({
       >
         ▶
       </button>
-      <div className="paces">
-        <label className="pace" title="How fast Claude reads the Spanish aloud">
-          <span className="pace-label">Speech</span>
-          <input
-            type="range"
-            min={0.5}
-            max={2.0}
-            step={0.1}
-            value={speechPaceMultiplier}
-            onChange={(e) =>
-              dispatch({ kind: 'set-speech-pace', multiplier: Number(e.target.value) })
-            }
-          />
-          <span className="pace-value">{speechPaceMultiplier.toFixed(1)}×</span>
-        </label>
-        <label
-          className={englishTtsEnabled ? 'pace dimmed' : 'pace'}
-          title={
-            englishTtsEnabled
-              ? 'Inactive while English audio is on — the audio sets the pace.'
-              : 'How long the English stays on screen before advancing'
-          }
-        >
-          <span className="pace-label">Reading</span>
-          <input
-            type="range"
-            min={0.5}
-            max={2.0}
-            step={0.1}
-            value={readPaceMultiplier}
-            disabled={englishTtsEnabled}
-            onChange={(e) =>
-              dispatch({ kind: 'set-read-pace', multiplier: Number(e.target.value) })
-            }
-          />
-          <span className="pace-value">{readPaceMultiplier.toFixed(1)}×</span>
-        </label>
-        <label className="pace" title="Read the English aloud after the Spanish">
-          <span className="pace-label english-toggle-label">
-            <input
-              type="checkbox"
-              checked={englishTtsEnabled}
-              onChange={() => dispatch({ kind: 'toggle-english-tts' })}
-            />
-            <span>English</span>
-          </span>
-          <input
-            type="range"
-            min={0.5}
-            max={2.0}
-            step={0.1}
-            value={englishSpeechPaceMultiplier}
-            disabled={!englishTtsEnabled}
-            onChange={(e) =>
-              dispatch({ kind: 'set-english-speech-pace', multiplier: Number(e.target.value) })
-            }
-          />
-          <span className="pace-value">{englishSpeechPaceMultiplier.toFixed(1)}×</span>
-        </label>
-      </div>
-      <VoiceIndicator
-        voice={voice}
-        spanishVoiceCount={spanishVoiceCount}
-        allVoices={allVoices}
-        ready={voicesReady}
-      />
     </div>
   );
 }
