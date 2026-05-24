@@ -809,6 +809,7 @@ button.ghost {
   border-radius: 4px;
   font-size: 0.95rem;
   line-height: 1.4;
+  color: var(--text);
 }
 
 .word-lookup-panel.kind-loading {
@@ -862,9 +863,26 @@ button.ghost {
 
 .lookup-verb,
 .lookup-idiom {
-  padding: 0.4rem 0.5rem;
-  background: rgba(0, 0, 0, 0.03);
+  padding: 0.5rem 0.6rem;
+  background: rgba(91, 141, 239, 0.08);
   border-radius: 3px;
+  color: var(--text);
+}
+
+/* Tense/mood/person line under the verb infinitive. Use the page's full
+   text color (not muted) at slightly smaller size — it's actual content,
+   not a parenthetical aside. */
+.lookup-verb .small,
+.lookup-idiom .small {
+  font-size: 0.88rem;
+  color: var(--text);
+  opacity: 0.85;
+}
+
+.lookup-notes {
+  color: var(--text);
+  opacity: 0.85;
+  font-style: italic;
 }
 
 /* ===== Misc ===== */

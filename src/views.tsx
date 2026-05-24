@@ -1700,7 +1700,7 @@ function WordLookupPanel({
                 {' — '}
                 <em>{lookup.definition.verb.infinitiveEnglish}</em>
               </div>
-              <div className="muted small">
+              <div className="small">
                 {lookup.definition.verb.tense}
                 {' · '}
                 {lookup.definition.verb.mood}
@@ -1718,7 +1718,7 @@ function WordLookupPanel({
             </div>
           )}
           {lookup.definition.notes && (
-            <div className="lookup-notes muted small">{lookup.definition.notes}</div>
+            <div className="lookup-notes small">{lookup.definition.notes}</div>
           )}
         </div>
       )}
