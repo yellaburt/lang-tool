@@ -267,6 +267,12 @@ function isAuthError(err: unknown): boolean {
 // is overloaded, so the same call will fail the same way).
 class NonRetryableError extends Error {}
 
+// Marker for "the translation service refused this specific content."
+// Caller (batch fetcher) treats this as skip-and-continue, not as a
+// passage-level error. Inherits from NonRetryableError so the inner retry
+// loop in callChunkAndGloss also stops.
+export class ContentRefusedError extends NonRetryableError {}
+
 export async function callChunkAndGloss(text: string): Promise<ReadonlyArray<ChunkAndGloss>> {
   // Retry transient failures (EarlyDrop, network blips, 5xx) silently. Most
   // of the failures we see are these — auto-retry usually wins before the
@@ -295,10 +301,18 @@ export async function callChunkAndGloss(text: string): Promise<ReadonlyArray<Chu
         errorKind?: string;
       };
       if (payload.error) {
-        // App-level error from the function. errorKind 'overloaded' means
-        // Anthropic is at capacity — retrying within seconds won't help, so
-        // we break out and surface the message immediately.
-        if (payload.errorKind === 'overloaded') {
+        // App-level error from the function. Three known errorKinds:
+        //   overloaded — Anthropic at capacity; same call will fail.
+        //   unavailable — service tried + health check failed; same.
+        //   refused — content was specifically refused; caller will skip
+        //     this batch and continue with the next.
+        if (payload.errorKind === 'refused') {
+          throw new ContentRefusedError(payload.error);
+        }
+        if (
+          payload.errorKind === 'overloaded' ||
+          payload.errorKind === 'unavailable'
+        ) {
           throw new NonRetryableError(payload.error);
         }
         throw new Error(payload.error);

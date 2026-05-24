@@ -200,7 +200,31 @@ Deno.serve(async (req) => {
         errorKind: 'overloaded',
       });
     }
-    return jsonResponse({ error: `Anthropic call failed: ${message}` }, 502);
+    // Both Haiku AND Sonnet failed on this content. To distinguish
+    // "Anthropic is down" from "Anthropic is refusing this specific
+    // content" we run a tiny health check on a known-benign sentence.
+    // If that works, we know the service is up — the content was refused.
+    // If it fails, the service is genuinely unavailable.
+    try {
+      const healthy = await isServiceHealthy(client);
+      if (healthy) {
+        console.warn('chunk-and-gloss: content refused (health check passed)');
+        return jsonResponse({
+          error:
+            'The translation service declined to process this batch (content policy). The batch will be skipped.',
+          errorKind: 'refused',
+        });
+      }
+    } catch (healthErr) {
+      console.warn(
+        `health check itself threw: ${healthErr instanceof Error ? healthErr.message : healthErr}`,
+      );
+    }
+    return jsonResponse({
+      error:
+        'Translation service is unavailable right now. Please try again later.',
+      errorKind: 'unavailable',
+    });
   }
 });
 
@@ -292,4 +316,29 @@ function isOverloadError(err: unknown): boolean {
   if (!err) return false;
   const msg = err instanceof Error ? err.message : String(err);
   return /\b529\b|overloaded_error|"Overloaded"/i.test(msg);
+}
+
+// Probe whether Anthropic + our function are healthy by chunking a tiny,
+// uncontroversial sentence. Used as a tiebreaker when the real call has
+// failed: if THIS works, the service is fine and the original failure was
+// content refusal. If THIS also fails, the service is genuinely down.
+//
+// Short timeout (8s) since we expect this to either succeed quickly or
+// confirm an outage. We don't want to add 30s of latency on the failure
+// path.
+const HEALTH_CHECK_SENTENCE = 'Hola, ¿cómo estás hoy?';
+const HEALTH_CHECK_TIMEOUT_MS = 8_000;
+
+async function isServiceHealthy(client: Anthropic): Promise<boolean> {
+  try {
+    const result = await callModel(
+      client,
+      HEALTH_CHECK_SENTENCE,
+      PRIMARY_MODEL,
+      HEALTH_CHECK_TIMEOUT_MS,
+    );
+    return result.chunks.length > 0;
+  } catch {
+    return false;
+  }
 }

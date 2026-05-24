@@ -5,6 +5,7 @@ import { splitAndGloss } from './llm';
 import { loadLearnerState } from './storage';
 import {
   AuthSession,
+  ContentRefusedError,
   deletePassage as supabaseDeletePassage,
   callDefineWord,
   fetchLearnerState,
@@ -113,6 +114,12 @@ export type AppAction =
       readonly kind: 'mark-passage-error';
       readonly passageId: PassageId;
       readonly message: string;
+    }
+  | {
+      readonly kind: 'skip-batch';
+      readonly passageId: PassageId;
+      readonly placeholderChunk: Chunk;
+      readonly processedSentenceCount: number;
     }
   | { readonly kind: 'retry-passage-processing'; readonly passageId: PassageId }
   | { readonly kind: 'cancel-processing' }
@@ -363,6 +370,47 @@ function reducer(state: AppState, action: AppAction): AppState {
           ...state.ui,
           view: isFirstBatchError ? 'paste' : state.ui.view,
           processingError: isFirstBatchError ? action.message : state.ui.processingError,
+          activeBatchFetch: null,
+        },
+      };
+    }
+
+    case 'skip-batch': {
+      // The translation service refused this batch. Insert a single
+      // placeholder chunk so the reader sees something was skipped, advance
+      // processedSentenceCount past the refused sentences, and keep the
+      // passage status as in-progress so the next batch is still tried.
+      const existing = state.learner.passages[action.passageId];
+      if (!existing) {
+        return { ...state, ui: { ...state.ui, activeBatchFetch: null } };
+      }
+      const newChunks = [...existing.chunks, action.placeholderChunk];
+      const isComplete = action.processedSentenceCount >= existing.sentenceCount;
+      const newStatus: ProcessingStatus = isComplete
+        ? { kind: 'complete' }
+        : {
+            kind: 'in-progress',
+            processedSentenceCount: action.processedSentenceCount,
+          };
+      const shouldTransition =
+        state.ui.view === 'processing' &&
+        state.ui.currentPassageId === action.passageId &&
+        newChunks.length > 0;
+      return {
+        learner: {
+          ...state.learner,
+          passages: {
+            ...state.learner.passages,
+            [action.passageId]: {
+              ...existing,
+              chunks: newChunks,
+              processingStatus: newStatus,
+            },
+          },
+        },
+        ui: {
+          ...state.ui,
+          view: shouldTransition ? 'reading' : state.ui.view,
           activeBatchFetch: null,
         },
       };
@@ -1092,6 +1140,28 @@ export function App() {
           processedSentenceCount: newProcessedCount,
         });
       } catch (e) {
+        if (e instanceof ContentRefusedError) {
+          // The translation service refused this batch (likely on content
+          // grounds). Insert a placeholder chunk so the reader sees the
+          // skip, advance past the refused sentences, and let the next
+          // batch try its luck — refusal is per-batch, not per-passage.
+          const placeholderChunk: Chunk = {
+            id: ids.newChunkId(),
+            passageId,
+            index: startIndex,
+            sentenceIndex: sentenceOffset,
+            tlText: '[…]',
+            englishGloss: '[Skipped — translation service declined this section]',
+            audioRef: null,
+          };
+          dispatch({
+            kind: 'skip-batch',
+            passageId,
+            placeholderChunk,
+            processedSentenceCount: newProcessedCount,
+          });
+          return;
+        }
         const msg = e instanceof Error ? e.message : String(e);
         dispatch({ kind: 'mark-passage-error', passageId, message: msg });
       }

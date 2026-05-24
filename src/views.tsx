@@ -770,6 +770,12 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   const firstVoice = swapVoices ? reReadVoice : voice;
   const secondVoice = swapVoices ? voice : reReadVoice;
 
+  // Placeholder chunks (inserted when a batch was refused by the
+  // translation service) have tlText starting with '['. TTS would say
+  // "left bracket ellipsis right bracket" — useless. Detect and skip
+  // speech entirely; the visual text is the only signal needed.
+  const isPlaceholderChunk = currentChunk?.tlText.startsWith('[') ?? false;
+
   // Visual emphasis follows the audio. With re-read on, the highlight stays
   // on the Spanish cell from the start of re-read all the way through hold
   // and advance — so the eye moves straight down into the next chunk's
@@ -855,6 +861,13 @@ export function ReadingView({ state, dispatch }: ViewProps) {
       return;
     }
 
+    // Placeholder chunks: don't read aloud, just mark all speech phases as
+    // done so auto-advance moves us past it without audio jargon.
+    if (isPlaceholderChunk) {
+      dispatch({ kind: 'spanish-tts-finished', chunkId: currentChunk.id });
+      return;
+    }
+
     // Coming out of pause (or starting fresh): always begin a new utterance.
     if (spanishSpeechRef.current) {
       spanishSpeechRef.current.cancel();
@@ -875,6 +888,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     spanishTtsDone,
     isPaused,
     settingsOpen,
+    isPlaceholderChunk,
     speechPaceMultiplier,
     firstVoice,
     dispatch,
@@ -901,6 +915,11 @@ export function ReadingView({ state, dispatch }: ViewProps) {
         englishSpeechRef.current.cancel();
       }
       englishSpeechRef.current = null;
+      return;
+    }
+
+    if (isPlaceholderChunk) {
+      dispatch({ kind: 'english-tts-finished', chunkId: currentChunk.id });
       return;
     }
 
@@ -932,6 +951,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     englishTtsEnabled,
     isPaused,
     settingsOpen,
+    isPlaceholderChunk,
     englishSpeechPaceMultiplier,
     englishVoice,
     dispatch,
@@ -964,6 +984,11 @@ export function ReadingView({ state, dispatch }: ViewProps) {
       return;
     }
 
+    if (isPlaceholderChunk) {
+      dispatch({ kind: 're-read-tts-finished', chunkId: currentChunk.id });
+      return;
+    }
+
     // Coming out of pause: always begin a new utterance (see Spanish effect
     // for rationale — Chrome's resume() is unreliable).
     if (reReadSpeechRef.current) {
@@ -989,6 +1014,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     reReadDone,
     isPaused,
     settingsOpen,
+    isPlaceholderChunk,
     reReadPaceMultiplier,
     secondVoice,
     dispatch,
