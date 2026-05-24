@@ -500,7 +500,18 @@ function reducer(state: AppState, action: AppAction): AppState {
       // effects (in ReadingView) call synth.pause()/synth.resume() based on
       // isPaused, so toggling this flag freezes / continues the same
       // utterance mid-word. To advance, use the ▶ button or → arrow.
-      return { ...state, ui: { ...state.ui, isPaused: !state.ui.isPaused } };
+      //
+      // Resuming (was paused → now playing) also dismisses any open word
+      // lookup panel — Pete's "get out of my way and read" expectation.
+      const willBePaused = !state.ui.isPaused;
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          isPaused: willBePaused,
+          wordLookup: willBePaused ? state.ui.wordLookup : null,
+        },
+      };
     }
 
     case 'set-speech-pace':

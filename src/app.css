@@ -803,8 +803,10 @@ button.ghost {
 .word-lookup-panel {
   margin: 0.75rem 0 0.5rem;
   padding: 0.75rem 1rem;
-  background: var(--surface-bg, #f7f7f5);
-  border: 1px solid var(--surface-border, #ddd);
+  /* surface-soft is defined for every theme (including dark), so the
+     panel background contrasts properly with the page in all themes. */
+  background: var(--surface-soft);
+  border: 1px solid var(--surface-border);
   border-left: 3px solid #5b8def;
   border-radius: 4px;
   font-size: 0.95rem;
@@ -838,14 +840,14 @@ button.ghost {
   border: none;
   font-size: 1.4rem;
   line-height: 1;
-  color: var(--text-secondary, #777);
+  color: var(--text-secondary);
   cursor: pointer;
   padding: 0 0.3rem;
   font-family: inherit;
 }
 
 .lookup-dismiss:hover {
-  color: var(--text, #000);
+  color: var(--text);
 }
 
 .lookup-body > * + * {

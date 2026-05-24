@@ -1667,8 +1667,21 @@ function WordLookupPanel({
   lookup: WordLookupUiState;
   dispatch: (a: AppAction) => void;
 }) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  // Scroll the panel into view on first appearance and again when it
+  // transitions from loading → ready (since the panel grows then). 'nearest'
+  // does the minimum scroll required, so it won't yank the page if the
+  // panel is already visible.
+  useEffect(() => {
+    panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [lookup.kind]);
   return (
-    <div className={`word-lookup-panel kind-${lookup.kind}`} role="dialog" aria-label="Word definition">
+    <div
+      ref={panelRef}
+      className={`word-lookup-panel kind-${lookup.kind}`}
+      role="dialog"
+      aria-label="Word definition"
+    >
       <div className="lookup-header">
         <span className="lookup-word">{lookup.word}</span>
         <button
