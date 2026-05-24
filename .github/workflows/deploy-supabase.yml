@@ -1,0 +1,39 @@
+# Auto-deploy Supabase Edge Functions on push to main.
+#
+# Triggers only when something under supabase/functions/ changes (or when
+# this workflow file itself changes — useful while iterating on the deploy
+# config). A manual workflow_dispatch trigger is also available from the
+# GitHub Actions tab.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_ACCESS_TOKEN  — generate at https://supabase.com/dashboard/account/tokens
+#   SUPABASE_PROJECT_ID    — the project ref, e.g. vbqnmwsmgdbwewzsfxud
+#                            (from the project URL or dashboard)
+
+name: Deploy Supabase Edge Functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+      - '.github/workflows/deploy-supabase.yml'
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Deploy chunk-and-gloss
+        run: supabase functions deploy chunk-and-gloss --project-ref "$PROJECT_ID"
