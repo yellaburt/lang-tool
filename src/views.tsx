@@ -1,6 +1,6 @@
 import type { CSSProperties, FormEvent } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { assertNever } from './core';
+import { assertNever, countSignificantWords } from './core';
 import { hasApiKey } from './llm';
 import { getCurrentSession, signOut } from './supabase';
 import { Chunk, ChunkId, EmphasisStyle, Passage, Settings, ThemeName } from './types';
@@ -408,6 +408,19 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
                   <span>Alternate which voice reads first (per sentence)</span>
                 </label>
               )}
+              <label
+                className="toggle-row"
+                title="When unchecked, very short chunks aren't worth re-reading and get skipped"
+              >
+                <input
+                  type="checkbox"
+                  checked={settings.reReadShortChunks}
+                  onChange={() =>
+                    dispatch({ kind: 'toggle-re-read-short-chunks' })
+                  }
+                />
+                <span>Re-read short chunks (≤3 new words)</span>
+              </label>
             </>
           )}
           <p className="muted small">
@@ -712,6 +725,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   const reReadEnabled = state.learner.settings.reReadEnabled;
   const reReadPaceMultiplier = state.learner.settings.reReadPaceMultiplier;
   const reReadAlternates = state.learner.settings.reReadAlternates;
+  const reReadShortChunks = state.learner.settings.reReadShortChunks;
   const settingsOpen = state.ui.settingsOpen;
   const dialect = state.learner.settings.dialect;
 
@@ -989,6 +1003,17 @@ export function ReadingView({ state, dispatch }: ViewProps) {
       return;
     }
 
+    // Skip re-read for very short chunks (≤3 significant new words). The
+    // pedagogical value of a second reading is low for "Howard Jones." or
+    // "Hola." — and the dead-air feels worse than useful. Setting overrides.
+    if (
+      !reReadShortChunks &&
+      countSignificantWords(currentChunk.tlText, currentChunk.englishGloss) <= 3
+    ) {
+      dispatch({ kind: 're-read-tts-finished', chunkId: currentChunk.id });
+      return;
+    }
+
     // Coming out of pause: always begin a new utterance (see Spanish effect
     // for rationale — Chrome's resume() is unreliable).
     if (reReadSpeechRef.current) {
@@ -1008,6 +1033,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   }, [
     currentChunk?.id,
     reReadEnabled,
+    reReadShortChunks,
     spanishTtsDone,
     englishTtsEnabled,
     englishTtsDone,
@@ -1383,7 +1409,6 @@ function ControlBar({ isPaused, dispatch }: ControlBarProps) {
 function VoiceIndicator({
   voice,
   spanishVoiceCount,
-  allVoices,
   ready,
 }: {
   voice: SpeechSynthesisVoice | null;
@@ -1391,28 +1416,17 @@ function VoiceIndicator({
   allVoices: ReadonlyArray<SpeechSynthesisVoice>;
   ready: boolean;
 }) {
-  // While voices are still loading (briefly, on initial page load in Chrome),
-  // don't announce the negative. Just show a neutral "looking…" placeholder.
+  // Always render as a single inline line. The old prominent warning panel
+  // (with the "show installed voices" details expander) was redundant — the
+  // user can see the same info in the Spanish voice dropdown right below.
   if (!ready) {
     return <span className="voice-indicator">🔊 Looking for voices…</span>;
   }
   if (voice === null && spanishVoiceCount === 0) {
     return (
-      <div className="voice-indicator voice-warn">
-        <div>⚠ No Spanish voice ({allVoices.length} other voices installed)</div>
-        {allVoices.length > 0 && (
-          <details className="voice-list">
-            <summary>show installed voices</summary>
-            <ul>
-              {allVoices.map((v) => (
-                <li key={`${v.name}|${v.lang}`}>
-                  {v.name} <span className="voice-lang">({v.lang})</span>
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
-      </div>
+      <span className="voice-indicator">
+        🔊 No Spanish voice installed on this device
+      </span>
     );
   }
   return (

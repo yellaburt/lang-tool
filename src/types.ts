@@ -160,6 +160,10 @@ export interface Settings {
   readonly reReadVoice: string | null;
   readonly reReadPaceMultiplier: number;
   readonly reReadAlternates: boolean;
+  // When false (default), re-read skips chunks with ≤3 significant new words
+  // (English-identical words and proper names don't count; each digit of a
+  // numeric run counts as a separate word). Set true to always re-read.
+  readonly reReadShortChunks: boolean;
   readonly theme: ThemeName;
   readonly emphasisStyle: EmphasisStyle;
 }

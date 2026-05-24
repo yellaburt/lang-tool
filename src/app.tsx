@@ -139,6 +139,7 @@ export type AppAction =
   | { readonly kind: 'set-re-read-voice'; readonly voiceName: string | null }
   | { readonly kind: 'set-re-read-pace'; readonly multiplier: number }
   | { readonly kind: 'toggle-re-read-alternates' }
+  | { readonly kind: 'toggle-re-read-short-chunks' }
   | { readonly kind: 'open-passage'; readonly passageId: PassageId; readonly now: number }
   | { readonly kind: 'delete-passage'; readonly passageId: PassageId }
   | { readonly kind: 'go-to-library' }
@@ -608,6 +609,14 @@ function reducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         learner: updateSettings(state.learner, { reReadPaceMultiplier: action.multiplier }),
+      };
+
+    case 'toggle-re-read-short-chunks':
+      return {
+        ...state,
+        learner: updateSettings(state.learner, {
+          reReadShortChunks: !state.learner.settings.reReadShortChunks,
+        }),
       };
 
     case 'toggle-re-read-alternates':
@@ -1115,7 +1124,14 @@ export function App() {
 
     void (async () => {
       try {
-        const chunkData = await splitAndGloss(batchText);
+        const chunkDataRaw = await splitAndGloss(batchText);
+        // Filter out chunks whose Spanish text contains no letters or digits
+        // (just punctuation like "." or "—"). Claude occasionally emits these
+        // as standalone chunks; they have no audio or learning value and
+        // render as empty rows.
+        const chunkData = chunkDataRaw.filter((cg) =>
+          /[\p{L}\p{N}]/u.test(cg.tlText),
+        );
         if (chunkData.length === 0) {
           dispatch({
             kind: 'mark-passage-error',

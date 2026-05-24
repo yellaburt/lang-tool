@@ -53,6 +53,7 @@ export function defaultSettings(): Settings {
     reReadVoice: null,
     reReadPaceMultiplier: 1.0,
     reReadAlternates: false,
+    reReadShortChunks: false,
     theme: 'white',
     emphasisStyle: 'color',
   };
@@ -126,6 +127,45 @@ export function chunkPassage(
 // by the shell to pre-split a passage before incremental batch processing.
 export function splitSentences(rawText: string): ReadonlyArray<string> {
   return splitOnTerminalPunctuation(rawText);
+}
+
+// Count "significant new words" in a Spanish chunk relative to its English
+// gloss. Used to decide whether re-read should fire on short chunks. Rules:
+//   - Letter-word that ALSO appears in the English gloss (case-insensitive):
+//     not new (e.g. "Howard", "Jones", "no", "hotel"). Doesn't count.
+//   - Letter-word that doesn't appear: counts as 1.
+//   - Numeric run: each digit counts (since digits are read one-by-one in
+//     speech — "ciento veintitres" is roughly 3 spoken units for "123").
+//   - Pure punctuation tokens don't count.
+//
+// Example: "No dijo Howard Jones" against "No said Howard Jones"
+//   No → in English → skip
+//   dijo → not in English → 1
+//   Howard → in English → skip
+//   Jones → in English → skip
+//   Total: 1
+export function countSignificantWords(
+  spanishText: string,
+  englishGloss: string | null,
+): number {
+  const englishWords = new Set<string>();
+  if (englishGloss) {
+    const matches = englishGloss.match(/[\p{L}]+/gu);
+    if (matches) {
+      for (const w of matches) englishWords.add(w.toLowerCase());
+    }
+  }
+  let count = 0;
+  // Match either a run of digits OR a run of Unicode letters.
+  const tokens = spanishText.match(/\d+|[\p{L}]+/gu) ?? [];
+  for (const token of tokens) {
+    if (/^\d+$/.test(token)) {
+      count += token.length;
+    } else if (!englishWords.has(token.toLowerCase())) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 // Tokens that look like sentence ends but aren't. Lowercased, no trailing dot.
