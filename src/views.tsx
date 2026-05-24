@@ -735,9 +735,11 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   }, [currentChunkIndex, isDone]);
 
   // Speak the Spanish chunk when it becomes current (or on replay). Pause
-  // pauses the utterance mid-word (true Web Speech pause), resume continues
-  // from where it left off. Opening settings still cancels — closing
-  // settings restarts the chunk from the start.
+  // stops the utterance mid-word. On resume we re-speak the chunk from the
+  // beginning rather than calling synth.resume() — Chrome's resume()
+  // silently fails after a few seconds paused, which produced the "pressed
+  // resume but nothing happens" bug. Re-speaking is reliable; the cost is
+  // re-hearing whatever you already heard of the current chunk.
   useEffect(() => {
     if (!currentChunk) return;
     if (spanishTtsDone) return;
@@ -752,15 +754,16 @@ export function ReadingView({ state, dispatch }: ViewProps) {
 
     if (isPaused) {
       if (spanishSpeechRef.current && !spanishSpeechRef.current.isEnded()) {
-        spanishSpeechRef.current.pause();
+        spanishSpeechRef.current.cancel();
       }
+      spanishSpeechRef.current = null;
       return;
     }
 
-    // Resume the same utterance if we have one parked from a prior pause.
-    if (spanishSpeechRef.current && !spanishSpeechRef.current.isEnded()) {
-      spanishSpeechRef.current.resume();
-      return;
+    // Coming out of pause (or starting fresh): always begin a new utterance.
+    if (spanishSpeechRef.current) {
+      spanishSpeechRef.current.cancel();
+      spanishSpeechRef.current = null;
     }
 
     const chunkAtStart = currentChunk;
@@ -800,14 +803,17 @@ export function ReadingView({ state, dispatch }: ViewProps) {
 
     if (isPaused) {
       if (englishSpeechRef.current && !englishSpeechRef.current.isEnded()) {
-        englishSpeechRef.current.pause();
+        englishSpeechRef.current.cancel();
       }
+      englishSpeechRef.current = null;
       return;
     }
 
-    if (englishSpeechRef.current && !englishSpeechRef.current.isEnded()) {
-      englishSpeechRef.current.resume();
-      return;
+    // Coming out of pause: always begin a new utterance (see Spanish effect
+    // for rationale — Chrome's resume() is unreliable).
+    if (englishSpeechRef.current) {
+      englishSpeechRef.current.cancel();
+      englishSpeechRef.current = null;
     }
 
     const gloss = currentChunk.englishGloss;
@@ -857,14 +863,17 @@ export function ReadingView({ state, dispatch }: ViewProps) {
 
     if (isPaused) {
       if (reReadSpeechRef.current && !reReadSpeechRef.current.isEnded()) {
-        reReadSpeechRef.current.pause();
+        reReadSpeechRef.current.cancel();
       }
+      reReadSpeechRef.current = null;
       return;
     }
 
-    if (reReadSpeechRef.current && !reReadSpeechRef.current.isEnded()) {
-      reReadSpeechRef.current.resume();
-      return;
+    // Coming out of pause: always begin a new utterance (see Spanish effect
+    // for rationale — Chrome's resume() is unreliable).
+    if (reReadSpeechRef.current) {
+      reReadSpeechRef.current.cancel();
+      reReadSpeechRef.current = null;
     }
 
     const chunkAtStart = currentChunk;
@@ -1548,7 +1557,8 @@ interface VoicesState {
   // ready=false during the brief window after page load when Chrome hasn't
   // yet populated speechSynthesis.getVoices() — without this flag we'd flash
   // a "no Spanish voice" warning even on devices that have voices installed.
-  // Flips to true on the first voiceschanged event, or after a 2s timeout.
+  // Flips to true on the first voiceschanged event, or after a 5s timeout
+  // (Android Chrome sometimes fires voiceschanged 3-5s after page load).
   readonly ready: boolean;
 }
 
@@ -1568,8 +1578,10 @@ function useAvailableVoices(): VoicesState {
     load();
     speechSynthesis.addEventListener('voiceschanged', load);
     // Fallback: if voiceschanged never fires (some platforms), give up
-    // looking after 2 seconds and report what we have.
-    const t = window.setTimeout(() => setReady(true), 2000);
+    // looking after 5 seconds and report what we have. Long enough to cover
+    // slow Android Chrome page loads; short enough that a real "no voices"
+    // device gets the warning before the user is staring at silence too long.
+    const t = window.setTimeout(() => setReady(true), 5000);
     return () => {
       speechSynthesis.removeEventListener('voiceschanged', load);
       window.clearTimeout(t);
