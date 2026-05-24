@@ -37,3 +37,6 @@ jobs:
 
       - name: Deploy chunk-and-gloss
         run: supabase functions deploy chunk-and-gloss --project-ref "$PROJECT_ID"
+
+      - name: Deploy define-word
+        run: supabase functions deploy define-word --project-ref "$PROJECT_ID"
