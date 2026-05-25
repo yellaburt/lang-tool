@@ -59,6 +59,11 @@ export interface UiState {
   readonly view: View;
   readonly draftText: string;
   readonly currentPassageId: PassageId | null;
+  // Listening mode adds an initial "hidden Spanish audio" phase before the
+  // normal Spanish phase. This flag tracks whether that hidden phase is done.
+  // In non-listening mode it stays implicitly satisfied (the speech effect
+  // only consults it when listeningMode is on).
+  readonly listeningHiddenSpanishDone: boolean;
   readonly spanishTtsDone: boolean;
   readonly englishTtsDone: boolean;
   readonly reReadDone: boolean;
@@ -123,6 +128,7 @@ export type AppAction =
     }
   | { readonly kind: 'retry-passage-processing'; readonly passageId: PassageId }
   | { readonly kind: 'cancel-processing' }
+  | { readonly kind: 'listening-hidden-spanish-finished'; readonly chunkId: ChunkId }
   | { readonly kind: 'spanish-tts-finished'; readonly chunkId: ChunkId }
   | { readonly kind: 'english-tts-finished'; readonly chunkId: ChunkId }
   | { readonly kind: 're-read-tts-finished'; readonly chunkId: ChunkId }
@@ -140,6 +146,7 @@ export type AppAction =
   | { readonly kind: 'set-re-read-pace'; readonly multiplier: number }
   | { readonly kind: 'toggle-re-read-alternates' }
   | { readonly kind: 'toggle-re-read-short-chunks' }
+  | { readonly kind: 'toggle-listening-mode' }
   | { readonly kind: 'open-passage'; readonly passageId: PassageId; readonly now: number }
   | { readonly kind: 'delete-passage'; readonly passageId: PassageId }
   | { readonly kind: 'go-to-library' }
@@ -171,6 +178,7 @@ function freshUiState(view: View): UiState {
     view,
     draftText: '',
     currentPassageId: null,
+    listeningHiddenSpanishDone: false,
     spanishTtsDone: false,
     englishTtsDone: false,
     reReadDone: false,
@@ -246,6 +254,7 @@ function reducer(state: AppState, action: AppAction): AppState {
           ...state.ui,
           view: 'processing',
           currentPassageId: action.passage.id,
+          listeningHiddenSpanishDone: false,
           spanishTtsDone: false,
           englishTtsDone: false,
           reReadDone: false,
@@ -267,6 +276,7 @@ function reducer(state: AppState, action: AppAction): AppState {
           view: 'library',
           currentPassageId: action.passage.id,
           draftText: '',
+          listeningHiddenSpanishDone: false,
           spanishTtsDone: false,
           englishTtsDone: false,
           reReadDone: false,
@@ -454,6 +464,15 @@ function reducer(state: AppState, action: AppAction): AppState {
         ui: { ...state.ui, view: 'paste' },
       };
 
+    case 'listening-hidden-spanish-finished': {
+      const passageId = state.ui.currentPassageId;
+      if (passageId === null) return state;
+      const passage = state.learner.passages[passageId];
+      const chunk = passage?.chunks[passage.lastReadChunkIndex];
+      if (!chunk || chunk.id !== action.chunkId) return state;
+      return { ...state, ui: { ...state.ui, listeningHiddenSpanishDone: true } };
+    }
+
     case 'spanish-tts-finished': {
       const passageId = state.ui.currentPassageId;
       if (passageId === null) return state;
@@ -491,6 +510,7 @@ function reducer(state: AppState, action: AppAction): AppState {
         ...next,
         ui: {
           ...next.ui,
+          listeningHiddenSpanishDone: false,
           spanishTtsDone: false,
           englishTtsDone: false,
           reReadDone: false,
@@ -508,6 +528,7 @@ function reducer(state: AppState, action: AppAction): AppState {
         ...next,
         ui: {
           ...next.ui,
+          listeningHiddenSpanishDone: false,
           spanishTtsDone: false,
           englishTtsDone: false,
           reReadDone: false,
@@ -525,6 +546,7 @@ function reducer(state: AppState, action: AppAction): AppState {
         ...next,
         ui: {
           ...next.ui,
+          listeningHiddenSpanishDone: false,
           spanishTtsDone: false,
           englishTtsDone: false,
           reReadDone: false,
@@ -538,6 +560,7 @@ function reducer(state: AppState, action: AppAction): AppState {
         ...state,
         ui: {
           ...state.ui,
+          listeningHiddenSpanishDone: false,
           spanishTtsDone: false,
           englishTtsDone: false,
           reReadDone: false,
@@ -619,6 +642,14 @@ function reducer(state: AppState, action: AppAction): AppState {
         }),
       };
 
+    case 'toggle-listening-mode':
+      return {
+        ...state,
+        learner: updateSettings(state.learner, {
+          listeningMode: !state.learner.settings.listeningMode,
+        }),
+      };
+
     case 'toggle-re-read-alternates':
       return {
         ...state,
@@ -641,6 +672,7 @@ function reducer(state: AppState, action: AppAction): AppState {
           ...state.ui,
           view: 'reading',
           currentPassageId: action.passageId,
+          listeningHiddenSpanishDone: false,
           spanishTtsDone: false,
           englishTtsDone: false,
           reReadDone: false,
@@ -661,7 +693,8 @@ function reducer(state: AppState, action: AppAction): AppState {
           ? {
               ...state.ui,
               currentPassageId: null,
-              spanishTtsDone: false,
+              listeningHiddenSpanishDone: false,
+          spanishTtsDone: false,
               englishTtsDone: false,
               reReadDone: false,
               isPaused: false,
@@ -677,6 +710,7 @@ function reducer(state: AppState, action: AppAction): AppState {
           ...state.ui,
           view: 'library',
           currentPassageId: null,
+          listeningHiddenSpanishDone: false,
           spanishTtsDone: false,
           englishTtsDone: false,
           reReadDone: false,
@@ -722,6 +756,7 @@ function reducer(state: AppState, action: AppAction): AppState {
           view: 'paste',
           draftText: '',
           currentPassageId: null,
+          listeningHiddenSpanishDone: false,
           spanishTtsDone: false,
           englishTtsDone: false,
           reReadDone: false,

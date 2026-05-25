@@ -351,6 +351,24 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
         </section>
 
         <section className="modal-section">
+          <h3>Listening Practice</h3>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={settings.listeningMode}
+              onChange={() => dispatch({ kind: 'toggle-listening-mode' })}
+            />
+            <span>Three-phase listening mode</span>
+          </label>
+          <p className="muted small">
+            With listening mode on, each chunk plays in three phases:
+            (1) Spanish audio with the text hidden — pure listening test;
+            (2) Spanish text appears and audio plays again; (3) English
+            text appears (and English audio plays if English aloud is on).
+          </p>
+        </section>
+
+        <section className="modal-section">
           <h3>Spanish Re-read</h3>
           <label className="toggle-row">
             <input
@@ -716,8 +734,15 @@ export function ProcessingView({ state, dispatch }: ViewProps) {
 // === Reading view ===
 
 export function ReadingView({ state, dispatch }: ViewProps) {
-  const { currentPassageId, spanishTtsDone, englishTtsDone, reReadDone, isPaused } =
-    state.ui;
+  const {
+    currentPassageId,
+    listeningHiddenSpanishDone,
+    spanishTtsDone,
+    englishTtsDone,
+    reReadDone,
+    isPaused,
+  } = state.ui;
+  const listeningMode = state.learner.settings.listeningMode;
   const speechPaceMultiplier = state.learner.settings.speechPaceMultiplier;
   const readPaceMultiplier = state.learner.settings.readPaceMultiplier;
   const englishTtsEnabled = state.learner.settings.englishTtsEnabled;
@@ -827,17 +852,23 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   // across re-renders — the React effect lifecycle can't distinguish
   // "deps changed because chunk advanced" from "deps changed because user
   // hit pause", so we manage the lifetime explicitly.
+  const hiddenSpanishSpeechRef = useRef<SpeechController | null>(null);
   const spanishSpeechRef = useRef<SpeechController | null>(null);
   const englishSpeechRef = useRef<SpeechController | null>(null);
   const reReadSpeechRef = useRef<SpeechController | null>(null);
 
   // Cancel any in-flight utterance when the current chunk changes (or the
   // view unmounts). Runs BEFORE the phase-driver effects start the next
-  // chunk's speech. We have to cancel all three because we may have been
-  // paused mid-English or mid-re-read when the user clicked advance.
+  // chunk's speech. We have to cancel all four because we may have been
+  // paused at any phase when the user clicked advance.
   useEffect(() => {
     return () => {
-      const refs = [spanishSpeechRef, englishSpeechRef, reReadSpeechRef];
+      const refs = [
+        hiddenSpanishSpeechRef,
+        spanishSpeechRef,
+        englishSpeechRef,
+        reReadSpeechRef,
+      ];
       for (const r of refs) {
         if (r.current && !r.current.isEnded()) {
           r.current.cancel();
@@ -860,6 +891,63 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     }
   }, [currentChunkIndex, isDone]);
 
+  // Listening-mode hidden Spanish phase: in listeningMode, the first audio
+  // play happens with all text hidden. Once it ends, listeningHiddenSpanishDone
+  // flips true and the regular Spanish effect (with text now visible) fires.
+  useEffect(() => {
+    if (!currentChunk) return;
+    if (!listeningMode) return;
+    if (listeningHiddenSpanishDone) return;
+
+    if (settingsOpen || isPaused) {
+      if (
+        hiddenSpanishSpeechRef.current &&
+        !hiddenSpanishSpeechRef.current.isEnded()
+      ) {
+        hiddenSpanishSpeechRef.current.cancel();
+      }
+      hiddenSpanishSpeechRef.current = null;
+      return;
+    }
+
+    if (isPlaceholderChunk) {
+      dispatch({
+        kind: 'listening-hidden-spanish-finished',
+        chunkId: currentChunk.id,
+      });
+      return;
+    }
+
+    if (hiddenSpanishSpeechRef.current) {
+      hiddenSpanishSpeechRef.current.cancel();
+      hiddenSpanishSpeechRef.current = null;
+    }
+
+    const chunkAtStart = currentChunk;
+    const ttsRate = 0.85 * speechPaceMultiplier;
+    hiddenSpanishSpeechRef.current = speakChunk(
+      currentChunk.tlText,
+      firstVoice,
+      ttsRate,
+      speechPaceMultiplier,
+      () =>
+        dispatch({
+          kind: 'listening-hidden-spanish-finished',
+          chunkId: chunkAtStart.id,
+        }),
+    );
+  }, [
+    currentChunk?.id,
+    listeningMode,
+    listeningHiddenSpanishDone,
+    isPaused,
+    settingsOpen,
+    isPlaceholderChunk,
+    speechPaceMultiplier,
+    firstVoice,
+    dispatch,
+  ]);
+
   // Speak the Spanish chunk when it becomes current (or on replay). Pause
   // stops the utterance mid-word. On resume we re-speak the chunk from the
   // beginning rather than calling synth.resume() — Chrome's resume()
@@ -869,6 +957,9 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   useEffect(() => {
     if (!currentChunk) return;
     if (spanishTtsDone) return;
+    // In listening mode, wait for the hidden Spanish phase to complete
+    // before firing the visible-text Spanish phase.
+    if (listeningMode && !listeningHiddenSpanishDone) return;
 
     if (settingsOpen) {
       if (spanishSpeechRef.current && !spanishSpeechRef.current.isEnded()) {
@@ -911,6 +1002,8 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   }, [
     currentChunk?.id,
     spanishTtsDone,
+    listeningMode,
+    listeningHiddenSpanishDone,
     isPaused,
     settingsOpen,
     isPlaceholderChunk,
@@ -1180,6 +1273,9 @@ export function ReadingView({ state, dispatch }: ViewProps) {
               isPaused={isPaused}
               isFading={isFading}
               wordLookup={state.ui.wordLookup}
+              hideCurrentChunkText={
+                listeningMode && !listeningHiddenSpanishDone
+              }
               dispatch={dispatch}
             />
           ))}
@@ -1255,6 +1351,10 @@ interface SentenceItemProps {
   readonly isPaused: boolean;
   readonly isFading: boolean;
   readonly wordLookup: WordLookupUiState | null;
+  // Listening-mode phase 1: hide the Spanish (and English) text for the
+  // current chunk only. The user listens without seeing the words. Past
+  // sentences stay fully visible.
+  readonly hideCurrentChunkText: boolean;
   readonly dispatch: (a: AppAction) => void;
 }
 
@@ -1266,6 +1366,7 @@ function SentenceItem({
   isPaused,
   isFading,
   wordLookup,
+  hideCurrentChunkText,
   dispatch,
 }: SentenceItemProps) {
   const hasCurrent = sentence.some((c) => c.index === currentChunkIndex);
@@ -1309,6 +1410,10 @@ function SentenceItem({
       <div className="pairs">
         {visibleSubChunks.map((c) => {
           const isCurrentSub = c.index === currentChunkIndex;
+          // Listening-mode phase 1: hide Spanish AND English for the current
+          // sub-chunk. Past sub-chunks of this sentence remain visible — the
+          // hide only applies to the actively-listening chunk.
+          const hideForListening = isCurrentSub && hideCurrentChunkText;
           const showGloss =
             !isCurrentSub || (spanishTtsDone && c.englishGloss !== null);
           let rowCls = isCurrentSub ? 'pair-row current' : 'pair-row past';
@@ -1317,12 +1422,25 @@ function SentenceItem({
             rowCls += activeSide === 'tl' ? ' tl-active' : ' en-active';
           }
           if (isCurrentSub && isFading) rowCls += ' fading';
+          if (hideForListening) rowCls += ' listening-hidden';
           return (
             <div key={c.id} className={rowCls}>
               <div className="pair-tl">
-                <ClickableSpanish text={c.tlText} chunkId={c.id} dispatch={dispatch} />
+                {hideForListening ? (
+                  <span className="listening-placeholder" aria-hidden="true">
+                    🎧 listening…
+                  </span>
+                ) : (
+                  <ClickableSpanish
+                    text={c.tlText}
+                    chunkId={c.id}
+                    dispatch={dispatch}
+                  />
+                )}
               </div>
-              <div className="pair-en">{showGloss ? c.englishGloss : ''}</div>
+              <div className="pair-en">
+                {hideForListening ? '' : showGloss ? c.englishGloss : ''}
+              </div>
             </div>
           );
         })}

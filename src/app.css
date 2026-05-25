@@ -769,6 +769,15 @@ button.ghost {
   }
 }
 
+/* Listening-mode placeholder for the active chunk during phase 1. The
+   user hears audio but the text is hidden. Styled subtly so it doesn't
+   feel like a real chunk of content. */
+.listening-placeholder {
+  color: var(--text-secondary);
+  font-style: italic;
+  opacity: 0.7;
+}
+
 /* ===== Clickable Spanish words ===== */
 
 /* The word button itself: must be visually identical to surrounding text

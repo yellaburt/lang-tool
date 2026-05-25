@@ -164,6 +164,13 @@ export interface Settings {
   // (English-identical words and proper names don't count; each digit of a
   // numeric run counts as a separate word). Set true to always re-read.
   readonly reReadShortChunks: boolean;
+  // Listening practice mode: each chunk runs in 3 phases —
+  //   1. Spanish audio plays with all text hidden (pure listening test)
+  //   2. Spanish text appears + Spanish audio plays again
+  //   3. English text appears + English audio plays (if english TTS on)
+  // Existing re-read still works on top of this if enabled, adding a 4th
+  // phase.
+  readonly listeningMode: boolean;
   readonly theme: ThemeName;
   readonly emphasisStyle: EmphasisStyle;
 }

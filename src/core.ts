@@ -54,6 +54,7 @@ export function defaultSettings(): Settings {
     reReadPaceMultiplier: 1.0,
     reReadAlternates: false,
     reReadShortChunks: false,
+    listeningMode: false,
     theme: 'white',
     emphasisStyle: 'color',
   };
