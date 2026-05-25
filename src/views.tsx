@@ -790,6 +790,17 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   // speech entirely; the visual text is the only signal needed.
   const isPlaceholderChunk = currentChunk?.tlText.startsWith('[') ?? false;
 
+  // Will the re-read effect actually fire for this chunk? Same condition
+  // as the effect uses, so the highlight logic stays in sync. When re-read
+  // is suppressed (short chunk, placeholder, etc.), the highlight stays on
+  // English after the English phase — no flash back to Spanish.
+  const reReadWillFireForThisChunk =
+    reReadEnabled &&
+    !isPlaceholderChunk &&
+    currentChunk !== undefined &&
+    (reReadShortChunks ||
+      countSignificantWords(currentChunk.tlText, currentChunk.englishGloss) > 3);
+
   // Visual emphasis follows the audio. With re-read on, the highlight stays
   // on the Spanish cell from the start of re-read all the way through hold
   // and advance — so the eye moves straight down into the next chunk's
@@ -799,7 +810,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     activeSide = 'tl';
   } else if (englishTtsEnabled && !englishTtsDone) {
     activeSide = 'en';
-  } else if (reReadEnabled) {
+  } else if (reReadWillFireForThisChunk) {
     activeSide = 'tl';
   } else {
     activeSide = 'en';
