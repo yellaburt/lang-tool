@@ -528,6 +528,90 @@ function VoiceSelect({
 
 // === Library view ===
 
+// Two-level folder tree assembled from the flat passage list.
+interface FolderTree {
+  readonly ungrouped: ReadonlyArray<Passage>;
+  readonly folders: ReadonlyArray<{
+    readonly name: string;
+    readonly ungrouped: ReadonlyArray<Passage>;
+    readonly subfolders: ReadonlyArray<{
+      readonly name: string;
+      readonly passages: ReadonlyArray<Passage>;
+    }>;
+  }>;
+}
+
+function groupByFolder(passages: ReadonlyArray<Passage>): FolderTree {
+  const ungrouped: Passage[] = [];
+  const folderMap = new Map<
+    string,
+    { ungrouped: Passage[]; subfolders: Map<string, Passage[]> }
+  >();
+  for (const p of passages) {
+    if (p.folder === null) {
+      ungrouped.push(p);
+      continue;
+    }
+    let folder = folderMap.get(p.folder);
+    if (!folder) {
+      folder = { ungrouped: [], subfolders: new Map() };
+      folderMap.set(p.folder, folder);
+    }
+    if (p.subfolder === null) {
+      folder.ungrouped.push(p);
+    } else {
+      let sub = folder.subfolders.get(p.subfolder);
+      if (!sub) {
+        sub = [];
+        folder.subfolders.set(p.subfolder, sub);
+      }
+      sub.push(p);
+    }
+  }
+  const folders = Array.from(folderMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, { ungrouped: ung, subfolders }]) => ({
+      name,
+      ungrouped: ung,
+      subfolders: Array.from(subfolders.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([sname, ps]) => ({ name: sname, passages: ps })),
+    }));
+  return { ungrouped, folders };
+}
+
+// All distinct folder names + their subfolder names. Used to populate
+// the datalist suggestions on the move-passage inline form.
+interface FolderCatalog {
+  readonly folders: ReadonlyArray<string>;
+  readonly subfoldersByFolder: ReadonlyMap<string, ReadonlyArray<string>>;
+}
+
+function buildFolderCatalog(passages: ReadonlyArray<Passage>): FolderCatalog {
+  const folders = new Set<string>();
+  const subs = new Map<string, Set<string>>();
+  for (const p of passages) {
+    if (p.folder === null) continue;
+    folders.add(p.folder);
+    if (p.subfolder !== null) {
+      let s = subs.get(p.folder);
+      if (!s) {
+        s = new Set();
+        subs.set(p.folder, s);
+      }
+      s.add(p.subfolder);
+    }
+  }
+  const subfoldersByFolder = new Map<string, ReadonlyArray<string>>();
+  for (const [folder, set] of subs) {
+    subfoldersByFolder.set(folder, Array.from(set).sort());
+  }
+  return {
+    folders: Array.from(folders).sort(),
+    subfoldersByFolder,
+  };
+}
+
 export function LibraryView({ state, dispatch }: ViewProps) {
   const passages = useMemo(
     () =>
@@ -536,6 +620,9 @@ export function LibraryView({ state, dispatch }: ViewProps) {
       ),
     [state.learner.passages],
   );
+  const tree = useMemo(() => groupByFolder(passages), [passages]);
+  const catalog = useMemo(() => buildFolderCatalog(passages), [passages]);
+
   return (
     <main className="container">
       <header className="library-header">
@@ -558,30 +645,162 @@ export function LibraryView({ state, dispatch }: ViewProps) {
           No saved passages yet. Click <strong>+ New passage</strong> to paste your first one.
         </p>
       ) : (
-        <ul className="passage-list">
-          {passages.map((p) => (
-            <PassageRow key={p.id} passage={p} dispatch={dispatch} />
+        <>
+          {tree.ungrouped.length > 0 && (
+            <ul className="passage-list">
+              {tree.ungrouped.map((p) => (
+                <PassageRow
+                  key={p.id}
+                  passage={p}
+                  catalog={catalog}
+                  dispatch={dispatch}
+                />
+              ))}
+            </ul>
+          )}
+          {tree.folders.map((f) => (
+            <FolderGroup
+              key={f.name}
+              folder={f}
+              catalog={catalog}
+              dispatch={dispatch}
+            />
           ))}
-        </ul>
+        </>
       )}
     </main>
   );
 }
 
+function FolderGroup({
+  folder,
+  catalog,
+  dispatch,
+}: {
+  folder: {
+    readonly name: string;
+    readonly ungrouped: ReadonlyArray<Passage>;
+    readonly subfolders: ReadonlyArray<{
+      readonly name: string;
+      readonly passages: ReadonlyArray<Passage>;
+    }>;
+  };
+  catalog: FolderCatalog;
+  dispatch: (a: AppAction) => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const total =
+    folder.ungrouped.length +
+    folder.subfolders.reduce((n, s) => n + s.passages.length, 0);
+  return (
+    <section className="folder-group">
+      <button
+        type="button"
+        className="folder-header"
+        onClick={(e) => {
+          e.currentTarget.blur();
+          setCollapsed((c) => !c);
+        }}
+        aria-expanded={!collapsed}
+      >
+        <span className="folder-chevron">{collapsed ? '▶' : '▼'}</span>
+        <span className="folder-name">{folder.name}</span>
+        <span className="folder-count">{total}</span>
+      </button>
+      {!collapsed && (
+        <div className="folder-body">
+          {folder.ungrouped.length > 0 && (
+            <ul className="passage-list">
+              {folder.ungrouped.map((p) => (
+                <PassageRow
+                  key={p.id}
+                  passage={p}
+                  catalog={catalog}
+                  dispatch={dispatch}
+                />
+              ))}
+            </ul>
+          )}
+          {folder.subfolders.map((s) => (
+            <SubfolderGroup
+              key={s.name}
+              subfolder={s}
+              catalog={catalog}
+              dispatch={dispatch}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SubfolderGroup({
+  subfolder,
+  catalog,
+  dispatch,
+}: {
+  subfolder: { readonly name: string; readonly passages: ReadonlyArray<Passage> };
+  catalog: FolderCatalog;
+  dispatch: (a: AppAction) => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  return (
+    <section className="subfolder-group">
+      <button
+        type="button"
+        className="subfolder-header"
+        onClick={(e) => {
+          e.currentTarget.blur();
+          setCollapsed((c) => !c);
+        }}
+        aria-expanded={!collapsed}
+      >
+        <span className="folder-chevron">{collapsed ? '▶' : '▼'}</span>
+        <span className="folder-name">{subfolder.name}</span>
+        <span className="folder-count">{subfolder.passages.length}</span>
+      </button>
+      {!collapsed && (
+        <ul className="passage-list">
+          {subfolder.passages.map((p) => (
+            <PassageRow
+              key={p.id}
+              passage={p}
+              catalog={catalog}
+              dispatch={dispatch}
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function PassageRow({
   passage,
+  catalog,
   dispatch,
 }: {
   passage: Passage;
+  catalog: FolderCatalog;
   dispatch: (a: AppAction) => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [moving, setMoving] = useState(false);
   const [draftTitle, setDraftTitle] = useState(passage.title);
+  const [draftFolder, setDraftFolder] = useState(passage.folder ?? '');
+  const [draftSub, setDraftSub] = useState(passage.subfolder ?? '');
   // Keep draft in sync if the title changes externally (e.g., the Claude
   // title-suggestion effect updates it after a moment).
   useEffect(() => {
     if (!editing) setDraftTitle(passage.title);
   }, [passage.title, editing]);
+  useEffect(() => {
+    if (!moving) {
+      setDraftFolder(passage.folder ?? '');
+      setDraftSub(passage.subfolder ?? '');
+    }
+  }, [passage.folder, passage.subfolder, moving]);
 
   function commit() {
     const trimmed = draftTitle.trim();
@@ -595,6 +814,22 @@ function PassageRow({
   function cancel() {
     setDraftTitle(passage.title);
     setEditing(false);
+  }
+  function commitMove() {
+    const f = draftFolder.trim();
+    const s = draftSub.trim();
+    dispatch({
+      kind: 'move-passage',
+      passageId: passage.id,
+      folder: f.length > 0 ? f : null,
+      subfolder: s.length > 0 ? s : null,
+    });
+    setMoving(false);
+  }
+  function cancelMove() {
+    setDraftFolder(passage.folder ?? '');
+    setDraftSub(passage.subfolder ?? '');
+    setMoving(false);
   }
 
   // Progress is measured in SENTENCES so the denominator is the full document
@@ -654,6 +889,71 @@ function PassageRow({
       </li>
     );
   }
+  if (moving) {
+    const folderListId = `folder-list-${passage.id}`;
+    const subListId = `sub-list-${passage.id}`;
+    const subSuggestions =
+      catalog.subfoldersByFolder.get(draftFolder.trim()) ?? [];
+    return (
+      <li className="passage-row editing">
+        <form
+          className="passage-move-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            commitMove();
+          }}
+        >
+          <div className="passage-move-row">
+            <span className="passage-title">{passage.title}</span>
+          </div>
+          <div className="passage-move-fields">
+            <label className="passage-move-field">
+              <span>Folder</span>
+              <input
+                type="text"
+                list={folderListId}
+                value={draftFolder}
+                onChange={(e) => setDraftFolder(e.target.value)}
+                placeholder="(top level)"
+                autoFocus
+              />
+              <datalist id={folderListId}>
+                {catalog.folders.map((f) => (
+                  <option key={f} value={f} />
+                ))}
+              </datalist>
+            </label>
+            <label className="passage-move-field">
+              <span>Sub-folder</span>
+              <input
+                type="text"
+                list={subListId}
+                value={draftSub}
+                onChange={(e) => setDraftSub(e.target.value)}
+                placeholder={
+                  draftFolder.trim().length === 0
+                    ? '(requires a folder)'
+                    : '(none)'
+                }
+                disabled={draftFolder.trim().length === 0}
+              />
+              <datalist id={subListId}>
+                {subSuggestions.map((s) => (
+                  <option key={s} value={s} />
+                ))}
+              </datalist>
+            </label>
+          </div>
+          <div className="passage-move-actions">
+            <button type="submit">Move</button>
+            <button type="button" className="ghost" onClick={cancelMove}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      </li>
+    );
+  }
   return (
     <li className="passage-row">
       <button
@@ -680,6 +980,18 @@ function PassageRow({
         title="Rename"
       >
         ✎
+      </button>
+      <button
+        type="button"
+        className="ghost passage-move"
+        onClick={(e) => {
+          e.currentTarget.blur();
+          setMoving(true);
+        }}
+        aria-label={`Move ${passage.title} to folder`}
+        title="Move to folder"
+      >
+        📁
       </button>
       <button
         type="button"

@@ -165,14 +165,14 @@ export async function insertPassage(passage: Passage, ownerId: string): Promise<
   if (error) throw new Error(`insertPassage: ${error.message}`);
 }
 
-// Update the metadata fields a user can edit directly: title, folder,
-// subfolder. Distinct from updatePassageContent (which is for the
-// chunk-stream + processing status as batches land).
+// Folder/subfolder mutator — kept separate from updatePassageContent so a
+// move-passage dispatch doesn't accidentally re-write the chunks blob, and
+// vice versa. Title moves through updatePassageContent (alongside the
+// content that triggers its writes).
 export async function updatePassageMetadata(passage: Passage): Promise<void> {
   const { error } = await supabase
     .from('passages')
     .update({
-      title: passage.title,
       folder: passage.folder,
       subfolder: passage.subfolder,
     })

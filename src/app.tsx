@@ -16,6 +16,7 @@ import {
   signInWithPassword,
   subscribeAuth,
   updatePassageContent,
+  updatePassageMetadata,
   upsertReadingState,
   upsertSettings,
 } from './supabase';
@@ -151,6 +152,12 @@ export type AppAction =
   | { readonly kind: 'open-passage'; readonly passageId: PassageId; readonly now: number }
   | { readonly kind: 'delete-passage'; readonly passageId: PassageId }
   | { readonly kind: 'rename-passage'; readonly passageId: PassageId; readonly title: string }
+  | {
+      readonly kind: 'move-passage';
+      readonly passageId: PassageId;
+      readonly folder: string | null;
+      readonly subfolder: string | null;
+    }
   | { readonly kind: 'go-to-library' }
   | { readonly kind: 'set-theme'; readonly theme: ThemeName }
   | { readonly kind: 'set-emphasis-style'; readonly style: EmphasisStyle }
@@ -701,6 +708,29 @@ function reducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case 'move-passage': {
+      const existing = state.learner.passages[action.passageId];
+      if (!existing) return state;
+      // Normalize: a subfolder requires a folder. If folder is null, force
+      // subfolder null too (matches the DB CHECK constraint).
+      const cleanFolder = action.folder?.trim() || null;
+      const cleanSub = cleanFolder === null ? null : action.subfolder?.trim() || null;
+      return {
+        ...state,
+        learner: {
+          ...state.learner,
+          passages: {
+            ...state.learner.passages,
+            [action.passageId]: {
+              ...existing,
+              folder: cleanFolder,
+              subfolder: cleanSub,
+            },
+          },
+        },
+      };
+    }
+
     case 'delete-passage': {
       const passages = { ...state.learner.passages };
       delete passages[action.passageId];
@@ -1016,6 +1046,14 @@ export function App() {
       ) {
         void updatePassageContent(after).catch((e) =>
           console.error('Passage update failed', e),
+        );
+      }
+      if (
+        before.folder !== after.folder ||
+        before.subfolder !== after.subfolder
+      ) {
+        void updatePassageMetadata(after).catch((e) =>
+          console.error('Passage folder update failed', e),
         );
       }
       if (

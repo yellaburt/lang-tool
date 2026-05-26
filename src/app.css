@@ -325,11 +325,119 @@ h2 {
   font-size: 0.85rem;
 }
 
-.passage-rename {
+.passage-rename,
+.passage-move {
   align-self: center;
   padding: 0.35rem 0.6rem;
   font-size: 1rem;
   line-height: 1;
+}
+
+/* ===== Folder groups ===== */
+
+.folder-group {
+  margin: 0.5rem 0 0.75rem;
+}
+
+.folder-header,
+.subfolder-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 0.5rem 0.25rem;
+  font-family: inherit;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.folder-header:hover,
+.subfolder-header:hover {
+  background: var(--surface-soft);
+  border-radius: 4px;
+}
+
+.folder-chevron {
+  display: inline-block;
+  width: 1em;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.folder-name {
+  flex: 1 1 auto;
+}
+
+.folder-count {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
+.folder-body {
+  margin-left: 0.75rem;
+}
+
+.subfolder-group {
+  margin: 0.25rem 0 0.5rem;
+}
+
+.subfolder-header {
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.subfolder-group .passage-list {
+  margin-left: 0.75rem;
+}
+
+/* ===== Move-to inline form ===== */
+
+.passage-move-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  padding: 0.5rem 0.75rem;
+}
+
+.passage-move-fields {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.passage-move-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1 1 200px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.passage-move-field input {
+  font-size: 1rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+}
+
+.passage-move-field input:disabled {
+  opacity: 0.5;
+}
+
+.passage-move-actions {
+  display: flex;
+  gap: 0.5rem;
 }
 
 .passage-edit-form {
