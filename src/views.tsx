@@ -694,19 +694,33 @@ function FolderGroup({
     folder.subfolders.reduce((n, s) => n + s.passages.length, 0);
   return (
     <section className="folder-group">
-      <button
-        type="button"
-        className="folder-header"
-        onClick={(e) => {
-          e.currentTarget.blur();
-          setCollapsed((c) => !c);
+      <FolderHeader
+        kind="folder"
+        name={folder.name}
+        count={total}
+        collapsed={collapsed}
+        onToggle={() => setCollapsed((c) => !c)}
+        onRename={(newName) =>
+          dispatch({
+            kind: 'rename-folder',
+            scope: 'folder',
+            oldName: folder.name,
+            newName,
+          })
+        }
+        onDelete={() => {
+          const ok = window.confirm(
+            `Remove folder "${folder.name}"? Its ${total} passage${total === 1 ? '' : 's'} will move to the top level.`,
+          );
+          if (ok) {
+            dispatch({
+              kind: 'delete-folder',
+              scope: 'folder',
+              name: folder.name,
+            });
+          }
         }}
-        aria-expanded={!collapsed}
-      >
-        <span className="folder-chevron">{collapsed ? '▶' : '▼'}</span>
-        <span className="folder-name">{folder.name}</span>
-        <span className="folder-count">{total}</span>
-      </button>
+      />
       {!collapsed && (
         <div className="folder-body">
           {folder.ungrouped.length > 0 && (
@@ -725,6 +739,7 @@ function FolderGroup({
             <SubfolderGroup
               key={s.name}
               subfolder={s}
+              parentFolder={folder.name}
               catalog={catalog}
               dispatch={dispatch}
             />
@@ -737,29 +752,48 @@ function FolderGroup({
 
 function SubfolderGroup({
   subfolder,
+  parentFolder,
   catalog,
   dispatch,
 }: {
   subfolder: { readonly name: string; readonly passages: ReadonlyArray<Passage> };
+  parentFolder: string;
   catalog: FolderCatalog;
   dispatch: (a: AppAction) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
+  const count = subfolder.passages.length;
   return (
     <section className="subfolder-group">
-      <button
-        type="button"
-        className="subfolder-header"
-        onClick={(e) => {
-          e.currentTarget.blur();
-          setCollapsed((c) => !c);
+      <FolderHeader
+        kind="subfolder"
+        name={subfolder.name}
+        count={count}
+        collapsed={collapsed}
+        onToggle={() => setCollapsed((c) => !c)}
+        onRename={(newName) =>
+          dispatch({
+            kind: 'rename-folder',
+            scope: 'subfolder',
+            oldName: subfolder.name,
+            newName,
+            parentFolder,
+          })
+        }
+        onDelete={() => {
+          const ok = window.confirm(
+            `Remove sub-folder "${subfolder.name}"? Its ${count} passage${count === 1 ? '' : 's'} will move up into "${parentFolder}".`,
+          );
+          if (ok) {
+            dispatch({
+              kind: 'delete-folder',
+              scope: 'subfolder',
+              name: subfolder.name,
+              parentFolder,
+            });
+          }
         }}
-        aria-expanded={!collapsed}
-      >
-        <span className="folder-chevron">{collapsed ? '▶' : '▼'}</span>
-        <span className="folder-name">{subfolder.name}</span>
-        <span className="folder-count">{subfolder.passages.length}</span>
-      </button>
+      />
       {!collapsed && (
         <ul className="passage-list">
           {subfolder.passages.map((p) => (
@@ -773,6 +807,129 @@ function SubfolderGroup({
         </ul>
       )}
     </section>
+  );
+}
+
+// Shared header for both folder and sub-folder. Three side buttons next to
+// the collapsible header: rename (✎), delete (×). Clicking the name area
+// toggles collapse; the side buttons stop propagation so they don't.
+function FolderHeader({
+  kind,
+  name,
+  count,
+  collapsed,
+  onToggle,
+  onRename,
+  onDelete,
+}: {
+  kind: 'folder' | 'subfolder';
+  name: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+  onRename: (newName: string) => void;
+  onDelete: () => void;
+}) {
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(name);
+  useEffect(() => {
+    if (!renaming) setDraft(name);
+  }, [name, renaming]);
+
+  function commit() {
+    const trimmed = draft.trim();
+    if (trimmed.length > 0 && trimmed !== name) {
+      onRename(trimmed);
+    } else {
+      setDraft(name);
+    }
+    setRenaming(false);
+  }
+  function cancel() {
+    setDraft(name);
+    setRenaming(false);
+  }
+
+  const headerCls = kind === 'folder' ? 'folder-header' : 'subfolder-header';
+
+  if (renaming) {
+    return (
+      <div className={`${headerCls} renaming`}>
+        <form
+          className="folder-rename-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            commit();
+          }}
+        >
+          <input
+            type="text"
+            className="folder-name-input"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                cancel();
+              }
+            }}
+            onBlur={commit}
+            autoFocus
+            aria-label={`${kind === 'folder' ? 'Folder' : 'Sub-folder'} name`}
+          />
+          <button type="submit" className="ghost">
+            Save
+          </button>
+          <button type="button" className="ghost" onClick={cancel}>
+            Cancel
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  return (
+    <div className={headerCls}>
+      <button
+        type="button"
+        className="folder-header-toggle"
+        onClick={(e) => {
+          e.currentTarget.blur();
+          onToggle();
+        }}
+        aria-expanded={!collapsed}
+      >
+        <span className="folder-chevron">{collapsed ? '▶' : '▼'}</span>
+        <span className="folder-name">{name}</span>
+        <span className="folder-count">{count}</span>
+      </button>
+      <button
+        type="button"
+        className="ghost folder-rename-btn"
+        onClick={(e) => {
+          e.stopPropagation();
+          e.currentTarget.blur();
+          setRenaming(true);
+        }}
+        aria-label={`Rename ${name}`}
+        title="Rename"
+      >
+        ✎
+      </button>
+      <button
+        type="button"
+        className="ghost folder-delete-btn"
+        onClick={(e) => {
+          e.stopPropagation();
+          e.currentTarget.blur();
+          onDelete();
+        }}
+        aria-label={`Remove ${name}`}
+        title="Remove folder (passages move out, no data deleted)"
+      >
+        ×
+      </button>
+    </div>
   );
 }
 

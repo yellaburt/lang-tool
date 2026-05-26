@@ -343,23 +343,55 @@ h2 {
 .subfolder-header {
   display: flex;
   align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.25rem;
+}
+
+.folder-header-toggle {
+  display: flex;
+  align-items: center;
   gap: 0.5rem;
-  width: 100%;
+  flex: 1 1 auto;
   background: transparent;
   border: none;
-  padding: 0.5rem 0.25rem;
+  padding: 0.4rem 0.25rem;
   font-family: inherit;
   font-size: 1.05rem;
   font-weight: 600;
   color: var(--text);
   cursor: pointer;
   text-align: left;
+  border-radius: 4px;
 }
 
-.folder-header:hover,
-.subfolder-header:hover {
+.folder-header-toggle:hover {
   background: var(--surface-soft);
+}
+
+.folder-rename-btn,
+.folder-delete-btn {
+  padding: 0.3rem 0.55rem;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.folder-rename-form {
+  display: flex;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  align-items: center;
+}
+
+.folder-name-input {
+  flex: 1 1 auto;
+  font-size: 1rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--surface-border);
   border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-weight: 600;
 }
 
 .folder-chevron {
@@ -387,7 +419,7 @@ h2 {
   margin: 0.25rem 0 0.5rem;
 }
 
-.subfolder-header {
+.subfolder-group .folder-header-toggle {
   font-size: 0.95rem;
   font-weight: 500;
 }

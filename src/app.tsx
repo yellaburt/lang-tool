@@ -158,6 +158,27 @@ export type AppAction =
       readonly folder: string | null;
       readonly subfolder: string | null;
     }
+  | {
+      // Rename a folder OR sub-folder. For 'folder' scope, every passage
+      // whose folder===oldName is updated. For 'subfolder' scope, every
+      // passage with folder===parentFolder AND subfolder===oldName is
+      // updated. If newName matches an existing folder/subfolder, the
+      // entries merge naturally — no error.
+      readonly kind: 'rename-folder';
+      readonly scope: 'folder' | 'subfolder';
+      readonly oldName: string;
+      readonly newName: string;
+      readonly parentFolder?: string;
+    }
+  | {
+      // "Delete" a folder = move all its passages out (folder→top-level,
+      // subfolder→parent's root). The folders themselves are implicit so
+      // there's nothing else to delete.
+      readonly kind: 'delete-folder';
+      readonly scope: 'folder' | 'subfolder';
+      readonly name: string;
+      readonly parentFolder?: string;
+    }
   | { readonly kind: 'go-to-library' }
   | { readonly kind: 'set-theme'; readonly theme: ThemeName }
   | { readonly kind: 'set-emphasis-style'; readonly style: EmphasisStyle }
@@ -728,6 +749,54 @@ function reducer(state: AppState, action: AppAction): AppState {
             },
           },
         },
+      };
+    }
+
+    case 'rename-folder': {
+      const newName = action.newName.trim();
+      if (newName.length === 0 || newName === action.oldName) return state;
+      const updated: Record<PassageId, Passage> = {};
+      for (const [id, p] of Object.entries(state.learner.passages)) {
+        const pid = id as PassageId;
+        if (action.scope === 'folder' && p.folder === action.oldName) {
+          updated[pid] = { ...p, folder: newName };
+        } else if (
+          action.scope === 'subfolder' &&
+          p.folder === action.parentFolder &&
+          p.subfolder === action.oldName
+        ) {
+          updated[pid] = { ...p, subfolder: newName };
+        } else {
+          updated[pid] = p;
+        }
+      }
+      return {
+        ...state,
+        learner: { ...state.learner, passages: updated },
+      };
+    }
+
+    case 'delete-folder': {
+      const updated: Record<PassageId, Passage> = {};
+      for (const [id, p] of Object.entries(state.learner.passages)) {
+        const pid = id as PassageId;
+        if (action.scope === 'folder' && p.folder === action.name) {
+          // Move out of folder entirely: top-level (both nulled).
+          updated[pid] = { ...p, folder: null, subfolder: null };
+        } else if (
+          action.scope === 'subfolder' &&
+          p.folder === action.parentFolder &&
+          p.subfolder === action.name
+        ) {
+          // Move up one level: stay in parent folder, clear subfolder.
+          updated[pid] = { ...p, subfolder: null };
+        } else {
+          updated[pid] = p;
+        }
+      }
+      return {
+        ...state,
+        learner: { ...state.learner, passages: updated },
       };
     }
 
