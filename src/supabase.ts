@@ -107,6 +107,8 @@ interface PassageRow {
   created_at: string;
   last_read_chunk_index?: number;
   last_opened_at?: string;
+  folder?: string | null;
+  subfolder?: string | null;
 }
 
 function passageFromRow(row: PassageRow): Passage {
@@ -123,6 +125,8 @@ function passageFromRow(row: PassageRow): Passage {
     lastReadChunkIndex: row.last_read_chunk_index ?? 0,
     sentenceCount: row.sentence_count,
     processingStatus: row.processing_status,
+    folder: row.folder ?? null,
+    subfolder: row.subfolder ?? null,
   };
 }
 
@@ -155,8 +159,25 @@ export async function insertPassage(passage: Passage, ownerId: string): Promise<
     processing_status: passage.processingStatus,
     sentence_count: passage.sentenceCount,
     created_at: new Date(passage.createdAt).toISOString(),
+    folder: passage.folder,
+    subfolder: passage.subfolder,
   });
   if (error) throw new Error(`insertPassage: ${error.message}`);
+}
+
+// Update the metadata fields a user can edit directly: title, folder,
+// subfolder. Distinct from updatePassageContent (which is for the
+// chunk-stream + processing status as batches land).
+export async function updatePassageMetadata(passage: Passage): Promise<void> {
+  const { error } = await supabase
+    .from('passages')
+    .update({
+      title: passage.title,
+      folder: passage.folder,
+      subfolder: passage.subfolder,
+    })
+    .eq('id', passage.id);
+  if (error) throw new Error(`updatePassageMetadata: ${error.message}`);
 }
 
 export async function updatePassageContent(passage: Passage): Promise<void> {
@@ -334,6 +355,27 @@ export async function callChunkAndGloss(text: string): Promise<ReadonlyArray<Chu
   // Log the technical detail for debugging, then surface the friendly one.
   console.error('chunk-and-gloss failed after retries:', lastErr);
   throw new Error(humanizeChunkAndGlossError(lastErr));
+}
+
+// === Edge Function: suggest-title ===
+
+// Returns a short library-card-style title for the passage. Used at save
+// time (background) and by an explicit "Suggest title" button. Failure is
+// non-fatal — caller falls back to a first-line-derived title.
+export async function callSuggestTitle(text: string): Promise<string> {
+  const { data, error } = await supabase.functions.invoke('suggest-title', {
+    body: { text },
+  });
+  if (error) {
+    console.warn('suggest-title transport error:', error);
+    throw new Error('Title suggestion failed.');
+  }
+  const payload = data as { title?: string; error?: string };
+  if (payload.error) throw new Error(payload.error);
+  if (!payload.title || payload.title.length === 0) {
+    throw new Error('Empty title.');
+  }
+  return payload.title;
 }
 
 // === Edge Function: define-word ===

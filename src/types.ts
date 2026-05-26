@@ -46,6 +46,10 @@ export interface Passage {
   // batches are processed; processingStatus tracks how many sentences are done.
   readonly sentenceCount: number;
   readonly processingStatus: ProcessingStatus;
+  // Optional two-level library organization. null = top-level (no folder).
+  // subfolder may only be set when folder is also set.
+  readonly folder: string | null;
+  readonly subfolder: string | null;
 }
 
 export interface Chunk {

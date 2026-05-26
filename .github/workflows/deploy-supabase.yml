@@ -40,3 +40,6 @@ jobs:
 
       - name: Deploy define-word
         run: supabase functions deploy define-word --project-ref "$PROJECT_ID"
+
+      - name: Deploy suggest-title
+        run: supabase functions deploy suggest-title --project-ref "$PROJECT_ID"

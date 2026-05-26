@@ -881,6 +881,8 @@ export function buildEmptyPassage(rawText: string): Passage | null {
     lastReadChunkIndex: 0,
     sentenceCount: sentences.length,
     processingStatus: { kind: 'in-progress', processedSentenceCount: 0 },
+    folder: null,
+    subfolder: null,
   };
 }
 

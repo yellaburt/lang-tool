@@ -381,6 +381,8 @@ describe('state reducers', () => {
       lastReadChunkIndex: 0,
       sentenceCount: 1,
       processingStatus: { kind: 'complete' },
+      folder: null,
+      subfolder: null,
     };
     const next = addPassage(emptyLearnerState(), passage);
     expect(next.passages['p1' as PassageId]).toEqual(passage);
