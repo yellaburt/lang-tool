@@ -341,10 +341,20 @@ export async function callChunkAndGloss(text: string): Promise<ReadonlyArray<Chu
 export async function callDefineWord(
   word: string,
   chunkText: string,
-  language: string = 'es',
+  options: {
+    language?: string;
+    passageId?: PassageId;
+    chunkId?: ChunkId;
+  } = {},
 ): Promise<WordDefinition> {
   const { data, error } = await supabase.functions.invoke('define-word', {
-    body: { word, chunkText, language },
+    body: {
+      word,
+      chunkText,
+      language: options.language ?? 'es',
+      passageId: options.passageId,
+      chunkId: options.chunkId,
+    },
   });
   if (error) {
     console.error('define-word transport error:', error);

@@ -1054,14 +1054,16 @@ export function App() {
     if (!wordLookup || wordLookup.kind !== 'loading') return;
     let cancelled = false;
     void (async () => {
-      // Find the chunk text for the chunkId. Search across all loaded
-      // passages — usually the chunk is in state.learner.passages[currentPassageId]
-      // but the cross-passage search is cheap and avoids coupling to UI state.
+      // Find the chunk text + passageId for the chunkId. Search across all
+      // loaded passages — usually the chunk is in the current passage but
+      // the cross-passage search is cheap and avoids coupling to UI state.
       let chunkText: string | null = null;
+      let passageIdForChunk: PassageId | null = null;
       for (const passage of Object.values(passages)) {
         const c = passage.chunks.find((ch) => ch.id === wordLookup.chunkId);
         if (c) {
           chunkText = c.tlText;
+          passageIdForChunk = passage.id;
           break;
         }
       }
@@ -1077,7 +1079,10 @@ export function App() {
         return;
       }
       try {
-        const definition = await callDefineWord(wordLookup.word, chunkText);
+        const definition = await callDefineWord(wordLookup.word, chunkText, {
+          ...(passageIdForChunk !== null ? { passageId: passageIdForChunk } : {}),
+          chunkId: wordLookup.chunkId,
+        });
         if (cancelled) return;
         dispatch({
           kind: 'lookup-word-result',

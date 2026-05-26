@@ -131,7 +131,13 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Unauthorized' }, 401);
   }
 
-  let body: { word?: unknown; chunkText?: unknown; language?: unknown };
+  let body: {
+    word?: unknown;
+    chunkText?: unknown;
+    language?: unknown;
+    passageId?: unknown;
+    chunkId?: unknown;
+  };
   try {
     body = await req.json();
   } catch {
@@ -140,8 +146,40 @@ Deno.serve(async (req) => {
   const word = typeof body.word === 'string' ? body.word.trim() : '';
   const chunkText = typeof body.chunkText === 'string' ? body.chunkText.trim() : '';
   const language = typeof body.language === 'string' ? body.language : 'es';
+  // Optional — fed forward into the per-user lookup-events audit trail so
+  // we can later resurface looked-up words contextually.
+  const passageId =
+    typeof body.passageId === 'string' && body.passageId.length > 0
+      ? body.passageId
+      : null;
+  const chunkId =
+    typeof body.chunkId === 'string' && body.chunkId.length > 0
+      ? body.chunkId
+      : null;
   if (word.length === 0) return jsonResponse({ error: 'No word provided' }, 400);
   if (chunkText.length === 0) return jsonResponse({ error: 'No chunkText provided' }, 400);
+
+  // Helper: record a per-user lookup event (fire-and-forget). Used both
+  // on cache hits and fresh results so the user's lookup history captures
+  // every tap, not just first-ever lookups.
+  function recordLookupEvent(def: unknown): void {
+    void supabase
+      .from('word_lookup_events')
+      .insert({
+        user_id: userData.user!.id,
+        word,
+        chunk_text: chunkText,
+        passage_id: passageId,
+        chunk_id: chunkId,
+        language,
+        definition: def,
+      })
+      .then(({ error }) => {
+        if (error) {
+          console.warn('lookup event insert failed:', error.message);
+        }
+      });
+  }
 
   // 1. Check cache.
   const { data: cached } = await supabase
@@ -152,6 +190,7 @@ Deno.serve(async (req) => {
     .eq('language', language)
     .maybeSingle();
   if (cached?.definition) {
+    recordLookupEvent(cached.definition);
     return jsonResponse({ definition: cached.definition, cached: true });
   }
 
@@ -196,7 +235,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Definition service had a problem. Please try again.' }, 502);
   }
 
-  // 3. Save to cache (fire-and-forget; don't block the response).
+  // 3. Save to cache + record per-user event (both fire-and-forget).
   void supabase
     .from('word_lookups')
     .insert({ word, chunk_text: chunkText, language, definition })
@@ -205,6 +244,7 @@ Deno.serve(async (req) => {
         console.warn('define-word cache insert failed:', error.message);
       }
     });
+  recordLookupEvent(definition);
 
   return jsonResponse({ definition, cached: false });
 });
