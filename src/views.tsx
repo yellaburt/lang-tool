@@ -575,10 +575,31 @@ function PassageRow({
   passage: Passage;
   dispatch: (a: AppAction) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(passage.title);
+  // Keep draft in sync if the title changes externally (e.g., the Claude
+  // title-suggestion effect updates it after a moment).
+  useEffect(() => {
+    if (!editing) setDraftTitle(passage.title);
+  }, [passage.title, editing]);
+
+  function commit() {
+    const trimmed = draftTitle.trim();
+    if (trimmed.length > 0 && trimmed !== passage.title) {
+      dispatch({ kind: 'rename-passage', passageId: passage.id, title: trimmed });
+    } else {
+      setDraftTitle(passage.title);
+    }
+    setEditing(false);
+  }
+  function cancel() {
+    setDraftTitle(passage.title);
+    setEditing(false);
+  }
+
   // Progress is measured in SENTENCES so the denominator is the full document
   // (passage.sentenceCount) rather than just the chunks that have been
-  // translated so far. Otherwise a half-processed passage would always show
-  // 99% as the reader catches up to whatever the LLM produced last.
+  // translated so far.
   const totalSentences = passage.sentenceCount;
   const isFinished =
     passage.processingStatus.kind === 'complete' &&
@@ -597,6 +618,42 @@ function PassageRow({
     month: 'short',
     day: 'numeric',
   });
+
+  if (editing) {
+    return (
+      <li className="passage-row editing">
+        <form
+          className="passage-edit-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            commit();
+          }}
+        >
+          <input
+            type="text"
+            className="passage-title-input"
+            value={draftTitle}
+            onChange={(e) => setDraftTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                cancel();
+              }
+            }}
+            onBlur={commit}
+            autoFocus
+            aria-label="Passage title"
+          />
+          <button type="submit" className="ghost">
+            Save
+          </button>
+          <button type="button" className="ghost" onClick={cancel}>
+            Cancel
+          </button>
+        </form>
+      </li>
+    );
+  }
   return (
     <li className="passage-row">
       <button
@@ -611,6 +668,18 @@ function PassageRow({
         <span className="passage-meta">
           {percent}% · {date}
         </span>
+      </button>
+      <button
+        type="button"
+        className="ghost passage-rename"
+        onClick={(e) => {
+          e.currentTarget.blur();
+          setEditing(true);
+        }}
+        aria-label={`Rename ${passage.title}`}
+        title="Rename"
+      >
+        ✎
       </button>
       <button
         type="button"

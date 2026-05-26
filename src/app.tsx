@@ -8,6 +8,7 @@ import {
   ContentRefusedError,
   deletePassage as supabaseDeletePassage,
   callDefineWord,
+  callSuggestTitle,
   fetchLearnerState,
   fetchPassages,
   getCurrentSession,
@@ -149,6 +150,7 @@ export type AppAction =
   | { readonly kind: 'toggle-listening-mode' }
   | { readonly kind: 'open-passage'; readonly passageId: PassageId; readonly now: number }
   | { readonly kind: 'delete-passage'; readonly passageId: PassageId }
+  | { readonly kind: 'rename-passage'; readonly passageId: PassageId; readonly title: string }
   | { readonly kind: 'go-to-library' }
   | { readonly kind: 'set-theme'; readonly theme: ThemeName }
   | { readonly kind: 'set-emphasis-style'; readonly style: EmphasisStyle }
@@ -682,6 +684,23 @@ function reducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case 'rename-passage': {
+      const existing = state.learner.passages[action.passageId];
+      if (!existing) return state;
+      const cleanTitle = action.title.trim();
+      if (cleanTitle.length === 0) return state;
+      return {
+        ...state,
+        learner: {
+          ...state.learner,
+          passages: {
+            ...state.learner.passages,
+            [action.passageId]: { ...existing, title: cleanTitle },
+          },
+        },
+      };
+    }
+
     case 'delete-passage': {
       const passages = { ...state.learner.passages };
       delete passages[action.passageId];
@@ -1021,6 +1040,35 @@ export function App() {
 
     prevLearnerRef.current = curr;
   }, [state.learner, libraryStatus, session]);
+
+  // Suggest a Claude-generated title for any passage whose title is still
+  // the deterministic first-line derivation. Each passage is attempted at
+  // most once per app session (tracked in a ref). User-renamed passages
+  // and passages that already have a non-default title are skipped.
+  const titleAttemptedRef = useRef<Set<PassageId>>(new Set());
+  useEffect(() => {
+    if (libraryStatus !== 'ready' || session === null) return;
+    for (const passage of Object.values(state.learner.passages)) {
+      if (titleAttemptedRef.current.has(passage.id)) continue;
+      titleAttemptedRef.current.add(passage.id);
+      // Skip if the user already named it (heuristic: title differs from
+      // the deterministic first-line derivation).
+      if (passage.title !== deriveTitle(passage.rawText)) continue;
+      void callSuggestTitle(passage.rawText)
+        .then((suggested) => {
+          if (suggested && suggested !== passage.title) {
+            dispatch({
+              kind: 'rename-passage',
+              passageId: passage.id,
+              title: suggested,
+            });
+          }
+        })
+        .catch((e) => {
+          console.warn('Title suggestion failed:', e);
+        });
+    }
+  }, [state.learner.passages, libraryStatus, session]);
 
   // Library auto-refresh: every time the user navigates to the library view,
   // re-fetch passages from Supabase so additions made on another device show
