@@ -3,6 +3,7 @@ import { ChunkAndGloss } from './prompt';
 import {
   Chunk,
   ChunkId,
+  GrammarExplanation,
   LearnerState,
   Passage,
   PassageId,
@@ -416,4 +417,42 @@ export async function callDefineWord(
     throw new Error('No definition returned.');
   }
   return payload.definition;
+}
+
+// === Edge Function: explain-grammar ===
+
+export async function callExplainGrammar(
+  spanishText: string,
+  englishGloss: string,
+  options: {
+    language?: string;
+    passageId?: PassageId;
+    chunkId?: ChunkId;
+  } = {},
+): Promise<GrammarExplanation> {
+  const { data, error } = await supabase.functions.invoke('explain-grammar', {
+    body: {
+      spanishText,
+      englishGloss,
+      language: options.language ?? 'es',
+      passageId: options.passageId,
+      chunkId: options.chunkId,
+    },
+  });
+  if (error) {
+    console.error('explain-grammar transport error:', error);
+    throw new Error(humanizeChunkAndGlossError(error));
+  }
+  const payload = data as {
+    explanation?: GrammarExplanation;
+    error?: string;
+    errorKind?: string;
+  };
+  if (payload.error) {
+    throw new Error(payload.error);
+  }
+  if (!payload.explanation) {
+    throw new Error('No grammar explanation returned.');
+  }
+  return payload.explanation;
 }

@@ -5,7 +5,12 @@ import { hasApiKey } from './llm';
 import { getCurrentSession, signOut } from './supabase';
 import { Chunk, ChunkId, EmphasisStyle, Passage, Settings, ThemeName } from './types';
 import { buildEmptyPassage } from './app';
-import type { AppAction, AppState, WordLookupUiState } from './app';
+import type {
+  AppAction,
+  AppState,
+  GrammarPanelUiState,
+  WordLookupUiState,
+} from './app';
 
 // === Shared view props ===
 
@@ -1795,7 +1800,10 @@ export function ReadingView({ state, dispatch }: ViewProps) {
       </div>
 
       <ol
-        className={'sentences' + (state.ui.wordLookup ? ' lookup-open' : '')}
+        className={
+          'sentences' +
+          (state.ui.wordLookup || state.ui.grammarPanel ? ' lookup-open' : '')
+        }
         ref={sentencesRef}
         style={{ '--fade-duration-ms': `${fadeMs}ms` } as CSSProperties}
       >
@@ -1811,6 +1819,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
               isPaused={isPaused}
               isFading={isFading}
               wordLookup={state.ui.wordLookup}
+              grammarPanel={state.ui.grammarPanel}
               hideCurrentChunkText={
                 listeningMode && !listeningHiddenSpanishDone
               }
@@ -1889,6 +1898,7 @@ interface SentenceItemProps {
   readonly isPaused: boolean;
   readonly isFading: boolean;
   readonly wordLookup: WordLookupUiState | null;
+  readonly grammarPanel: GrammarPanelUiState | null;
   // Listening-mode phase 1: hide the Spanish (and English) text for the
   // current chunk only. The user listens without seeing the words. Past
   // sentences stay fully visible.
@@ -1904,12 +1914,15 @@ function SentenceItem({
   isPaused,
   isFading,
   wordLookup,
+  grammarPanel,
   hideCurrentChunkText,
   dispatch,
 }: SentenceItemProps) {
   const hasCurrent = sentence.some((c) => c.index === currentChunkIndex);
   const lookupInThisSentence =
     wordLookup !== null && sentence.some((c) => c.id === wordLookup.chunkId);
+  const grammarInThisSentence =
+    grammarPanel !== null && sentence.some((c) => c.id === grammarPanel.chunkId);
 
   if (!hasCurrent) {
     // Past sentence: flowing Spanish paragraph + flowing English paragraph.
@@ -1933,6 +1946,9 @@ function SentenceItem({
         {enText.length > 0 && <div className="en">{enText}</div>}
         {lookupInThisSentence && wordLookup && (
           <WordLookupPanel lookup={wordLookup} dispatch={dispatch} />
+        )}
+        {grammarInThisSentence && grammarPanel && (
+          <GrammarPanel panel={grammarPanel} dispatch={dispatch} />
         )}
       </li>
     );
@@ -1969,11 +1985,25 @@ function SentenceItem({
                     🎧 listening…
                   </span>
                 ) : (
-                  <ClickableSpanish
-                    text={c.tlText}
-                    chunkId={c.id}
-                    dispatch={dispatch}
-                  />
+                  <>
+                    <ClickableSpanish
+                      text={c.tlText}
+                      chunkId={c.id}
+                      dispatch={dispatch}
+                    />
+                    <button
+                      type="button"
+                      className="grammar-button"
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        dispatch({ kind: 'request-grammar', chunkId: c.id });
+                      }}
+                      aria-label="Explain grammar of this chunk"
+                      title="Explain grammar"
+                    >
+                      ¶
+                    </button>
+                  </>
                 )}
               </div>
               <div className="pair-en">
@@ -1985,6 +2015,9 @@ function SentenceItem({
       </div>
       {lookupInThisSentence && wordLookup && (
         <WordLookupPanel lookup={wordLookup} dispatch={dispatch} />
+      )}
+      {grammarInThisSentence && grammarPanel && (
+        <GrammarPanel panel={grammarPanel} dispatch={dispatch} />
       )}
       {isPaused && (
         <button
@@ -2450,6 +2483,80 @@ function WordLookupPanel({
           )}
         </div>
       )}
+      </div>
+    </>
+  );
+}
+
+function GrammarPanel({
+  panel,
+  dispatch,
+}: {
+  panel: GrammarPanelUiState;
+  dispatch: (a: AppAction) => void;
+}) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  // Mirror the word-lookup behavior: scroll the panel into view on desktop,
+  // skip on mobile (the fixed bottom sheet doesn't need it).
+  useEffect(() => {
+    if (!window.matchMedia('(min-width: 641px)').matches) return;
+    panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [panel.kind]);
+  return (
+    <>
+      <div
+        className="grammar-backdrop"
+        onClick={() => dispatch({ kind: 'dismiss-grammar' })}
+        aria-hidden="true"
+      />
+      <div
+        ref={panelRef}
+        className={`grammar-panel kind-${panel.kind}`}
+        role="dialog"
+        aria-label="Grammar explanation"
+      >
+        <div className="lookup-header">
+          <span className="lookup-word">Grammar</span>
+          <button
+            type="button"
+            className="lookup-dismiss"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              dispatch({ kind: 'dismiss-grammar' });
+            }}
+            aria-label="Close grammar panel"
+            title="Close (audio stays paused — hit Resume to continue)"
+          >
+            ×
+          </button>
+        </div>
+        {panel.kind === 'loading' && (
+          <div className="lookup-body lookup-loading">Looking up…</div>
+        )}
+        {panel.kind === 'error' && (
+          <div className="lookup-body lookup-error">{panel.message}</div>
+        )}
+        {panel.kind === 'ready' && panel.explanation.isUnremarkable && (
+          <div className="lookup-body grammar-unremarkable">
+            Nothing notable in this sentence.
+          </div>
+        )}
+        {panel.kind === 'ready' && !panel.explanation.isUnremarkable && (
+          <div className="lookup-body">
+            {panel.explanation.summary.length > 0 && (
+              <p className="grammar-summary">{panel.explanation.summary}</p>
+            )}
+            {panel.explanation.notes.length > 0 && (
+              <ul className="grammar-notes">
+                {panel.explanation.notes.map((note, i) => (
+                  <li key={i}>
+                    <strong>{note.topic}:</strong> {note.explanation}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
     </>
   );

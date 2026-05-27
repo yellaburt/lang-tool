@@ -8,6 +8,7 @@ import {
   ContentRefusedError,
   deletePassage as supabaseDeletePassage,
   callDefineWord,
+  callExplainGrammar,
   callSuggestTitle,
   fetchLearnerState,
   fetchPassages,
@@ -24,6 +25,7 @@ import {
   Chunk,
   ChunkId,
   EmphasisStyle,
+  GrammarExplanation,
   LearnerState,
   Passage,
   PassageId,
@@ -79,6 +81,10 @@ export interface UiState {
   // it. We pause audio and surface a definition panel below the chunk the
   // word came from.
   readonly wordLookup: WordLookupUiState | null;
+  // Active grammar-panel lookup, if any. Mutually exclusive with wordLookup:
+  // opening one closes the other so the user never juggles two bottom sheets
+  // on mobile.
+  readonly grammarPanel: GrammarPanelUiState | null;
 }
 
 export type WordLookupUiState =
@@ -92,6 +98,19 @@ export type WordLookupUiState =
   | {
       readonly kind: 'error';
       readonly word: string;
+      readonly chunkId: ChunkId;
+      readonly message: string;
+    };
+
+export type GrammarPanelUiState =
+  | { readonly kind: 'loading'; readonly chunkId: ChunkId }
+  | {
+      readonly kind: 'ready';
+      readonly chunkId: ChunkId;
+      readonly explanation: GrammarExplanation;
+    }
+  | {
+      readonly kind: 'error';
       readonly chunkId: ChunkId;
       readonly message: string;
     };
@@ -199,7 +218,19 @@ export type AppAction =
       readonly chunkId: ChunkId;
       readonly message: string;
     }
-  | { readonly kind: 'dismiss-lookup' };
+  | { readonly kind: 'dismiss-lookup' }
+  | { readonly kind: 'request-grammar'; readonly chunkId: ChunkId }
+  | {
+      readonly kind: 'grammar-result';
+      readonly chunkId: ChunkId;
+      readonly explanation: GrammarExplanation;
+    }
+  | {
+      readonly kind: 'grammar-error';
+      readonly chunkId: ChunkId;
+      readonly message: string;
+    }
+  | { readonly kind: 'dismiss-grammar' };
 
 // Build an empty UiState; the learner state is supplied by the caller so the
 // same shape works whether we're starting fresh or hydrating from storage.
@@ -217,6 +248,7 @@ function freshUiState(view: View): UiState {
     settingsOpen: false,
     activeBatchFetch: null,
     wordLookup: null,
+    grammarPanel: null,
   };
 }
 
@@ -612,6 +644,7 @@ function reducer(state: AppState, action: AppAction): AppState {
           ...state.ui,
           isPaused: willBePaused,
           wordLookup: willBePaused ? state.ui.wordLookup : null,
+          grammarPanel: willBePaused ? state.ui.grammarPanel : null,
         },
       };
     }
@@ -889,12 +922,14 @@ function reducer(state: AppState, action: AppAction): AppState {
       // result. If the user clicks another word while one is loading, the
       // newer lookup replaces the older — the older one's result is
       // discarded by the result reducer's identity check.
+      // Mutual exclusion: any open grammar panel goes away.
       return {
         ...state,
         ui: {
           ...state.ui,
           isPaused: true,
           wordLookup: { kind: 'loading', word: action.word, chunkId: action.chunkId },
+          grammarPanel: null,
         },
       };
     }
@@ -951,6 +986,59 @@ function reducer(state: AppState, action: AppAction): AppState {
       // Note: we don't auto-resume. Pete chose "stay paused" — user hits
       // Resume manually to continue reading.
       return { ...state, ui: { ...state.ui, wordLookup: null } };
+
+    case 'request-grammar': {
+      // Same shape as 'lookup-word': pause audio, mark in flight, clear the
+      // other panel so only one bottom sheet is ever open.
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          isPaused: true,
+          grammarPanel: { kind: 'loading', chunkId: action.chunkId },
+          wordLookup: null,
+        },
+      };
+    }
+
+    case 'grammar-result': {
+      const gp = state.ui.grammarPanel;
+      if (!gp || gp.kind !== 'loading' || gp.chunkId !== action.chunkId) {
+        return state; // Stale result.
+      }
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          grammarPanel: {
+            kind: 'ready',
+            chunkId: action.chunkId,
+            explanation: action.explanation,
+          },
+        },
+      };
+    }
+
+    case 'grammar-error': {
+      const gp = state.ui.grammarPanel;
+      if (!gp || gp.kind !== 'loading' || gp.chunkId !== action.chunkId) {
+        return state;
+      }
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          grammarPanel: {
+            kind: 'error',
+            chunkId: action.chunkId,
+            message: action.message,
+          },
+        },
+      };
+    }
+
+    case 'dismiss-grammar':
+      return { ...state, ui: { ...state.ui, grammarPanel: null } };
 
     default:
       return assertNever(action);
@@ -1262,6 +1350,63 @@ export function App() {
       cancelled = true;
     };
   }, [wordLookup, passages]);
+
+  // Grammar-panel effect: when grammarPanel goes to {kind:'loading'}, look up
+  // the chunk's Spanish + English text and call explain-grammar. Mirrors the
+  // word-lookup effect above — same identity-check pattern guards against
+  // stale results when the user rapidly opens grammar on different chunks.
+  const grammarPanel = state.ui.grammarPanel;
+  useEffect(() => {
+    if (!grammarPanel || grammarPanel.kind !== 'loading') return;
+    let cancelled = false;
+    void (async () => {
+      let spanishText: string | null = null;
+      let englishGloss = '';
+      let passageIdForChunk: PassageId | null = null;
+      for (const passage of Object.values(passages)) {
+        const c = passage.chunks.find((ch) => ch.id === grammarPanel.chunkId);
+        if (c) {
+          spanishText = c.tlText;
+          englishGloss = c.englishGloss ?? '';
+          passageIdForChunk = passage.id;
+          break;
+        }
+      }
+      if (spanishText === null) {
+        if (!cancelled) {
+          dispatch({
+            kind: 'grammar-error',
+            chunkId: grammarPanel.chunkId,
+            message: "Couldn't find that chunk.",
+          });
+        }
+        return;
+      }
+      try {
+        const explanation = await callExplainGrammar(spanishText, englishGloss, {
+          ...(passageIdForChunk !== null ? { passageId: passageIdForChunk } : {}),
+          chunkId: grammarPanel.chunkId,
+        });
+        if (cancelled) return;
+        dispatch({
+          kind: 'grammar-result',
+          chunkId: grammarPanel.chunkId,
+          explanation,
+        });
+      } catch (e) {
+        if (cancelled) return;
+        const msg = e instanceof Error ? e.message : String(e);
+        dispatch({
+          kind: 'grammar-error',
+          chunkId: grammarPanel.chunkId,
+          message: msg,
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [grammarPanel, passages]);
 
   // Apply theme + emphasis-style as data attributes on the root element.
   // CSS variables and emphasis rules key off these.

@@ -977,9 +977,13 @@ button.ghost {
   background: var(--word-hover-bg, rgba(0, 100, 200, 0.2));
 }
 
-/* ===== Word lookup panel ===== */
+/* ===== Word lookup + grammar panels =====
+   Both panels share most styling (background, padding, mobile bottom-sheet
+   behavior). The accent color (border-left on desktop, border-top on mobile)
+   distinguishes them: blue for word lookup, green for grammar. */
 
-.word-lookup-panel {
+.word-lookup-panel,
+.grammar-panel {
   margin: 0.75rem 0 0.5rem;
   padding: 0.75rem 1rem;
   /* surface-soft is defined for every theme (including dark), so the
@@ -993,13 +997,68 @@ button.ghost {
   color: var(--text);
 }
 
-.word-lookup-panel.kind-loading {
+.grammar-panel {
+  border-left-color: #4a9d6a;
+}
+
+.word-lookup-panel.kind-loading,
+.grammar-panel.kind-loading {
   border-left-color: #aaa;
 }
 
-.word-lookup-panel.kind-error {
+.word-lookup-panel.kind-error,
+.grammar-panel.kind-error {
   border-left-color: #c44;
   background: #fff4f4;
+}
+
+/* Grammar button on each pair-tl in the current sentence. Subtle in
+   appearance so it doesn't compete with the reading text, but with an
+   explicit min-44x44 tap target on mobile so it's easy to land on
+   without mis-tapping a word. */
+.grammar-button {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.95rem;
+  cursor: pointer;
+  margin-left: 0.5rem;
+  padding: 0 0.4rem;
+  border-radius: 4px;
+  opacity: 0.55;
+  vertical-align: baseline;
+  transition: opacity 150ms ease-out, background-color 150ms ease-out;
+}
+
+.grammar-button:hover,
+.grammar-button:focus-visible {
+  opacity: 1;
+  background: rgba(74, 157, 106, 0.12);
+  border-color: rgba(74, 157, 106, 0.4);
+  outline: none;
+}
+
+.grammar-summary {
+  margin: 0;
+}
+
+.grammar-notes {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.grammar-notes li {
+  margin-top: 0.35rem;
+}
+
+.grammar-notes li:first-child {
+  margin-top: 0;
+}
+
+.grammar-unremarkable {
+  font-style: italic;
+  color: var(--text-secondary);
 }
 
 .lookup-header {
@@ -1071,16 +1130,18 @@ button.ghost {
   font-style: italic;
 }
 
-/* ===== Mobile word-lookup bottom sheet =====
-   Below 640px wide, the lookup panel pins to the bottom of the viewport as
-   a sheet with a tap-anywhere backdrop. Desktop keeps the inline-below
+/* ===== Mobile word-lookup + grammar bottom sheet =====
+   Below 640px wide, lookup/grammar panels pin to the bottom of the viewport
+   as a sheet with a tap-anywhere backdrop. Desktop keeps the inline-below
    behavior — none of these rules fire above 640px. */
-.word-lookup-backdrop {
+.word-lookup-backdrop,
+.grammar-backdrop {
   display: none;
 }
 
 @media (max-width: 640px) {
-  .word-lookup-backdrop {
+  .word-lookup-backdrop,
+  .grammar-backdrop {
     display: block;
     position: fixed;
     inset: 0;
@@ -1088,7 +1149,8 @@ button.ghost {
     z-index: 90;
     animation: backdrop-fade 150ms ease-out;
   }
-  .word-lookup-panel {
+  .word-lookup-panel,
+  .grammar-panel {
     position: fixed;
     left: 0;
     right: 0;
@@ -1103,14 +1165,20 @@ button.ghost {
     z-index: 100;
     animation: sheet-slide-up 200ms ease-out;
   }
-  .word-lookup-panel.kind-loading {
+  .grammar-panel {
+    border-top-color: #4a9d6a;
+  }
+  .word-lookup-panel.kind-loading,
+  .grammar-panel.kind-loading {
     border-top-color: #aaa;
   }
-  .word-lookup-panel.kind-error {
+  .word-lookup-panel.kind-error,
+  .grammar-panel.kind-error {
     border-top-color: #c44;
   }
   /* Grab-bar affordance at the top of the sheet. */
-  .word-lookup-panel::before {
+  .word-lookup-panel::before,
+  .grammar-panel::before {
     content: '';
     display: block;
     width: 40px;
@@ -1124,6 +1192,15 @@ button.ghost {
      above the sheet. */
   .sentences.lookup-open {
     padding-bottom: 55vh;
+  }
+  /* Larger tap zone for the grammar button on phones. */
+  .grammar-button {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 0.25rem;
   }
 }
 

@@ -28,6 +28,21 @@ export interface IdiomInfo {
   readonly meaning: string;
 }
 
+// Grammar explanation returned by the explain-grammar Edge Function for a
+// whole Spanish chunk. When isUnremarkable is true, summary is empty and
+// notes is empty — the chunk has nothing grammatically interesting for an
+// intermediate learner.
+export interface GrammarExplanation {
+  readonly isUnremarkable: boolean;
+  readonly summary: string;
+  readonly notes: ReadonlyArray<GrammarNote>;
+}
+
+export interface GrammarNote {
+  readonly topic: string;
+  readonly explanation: string;
+}
+
 export type ProcessingStatus =
   | { readonly kind: 'in-progress'; readonly processedSentenceCount: number }
   | { readonly kind: 'complete' }
