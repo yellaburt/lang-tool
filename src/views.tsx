@@ -1795,7 +1795,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
       </div>
 
       <ol
-        className="sentences"
+        className={'sentences' + (state.ui.wordLookup ? ' lookup-open' : '')}
         ref={sentencesRef}
         style={{ '--fade-duration-ms': `${fadeMs}ms` } as CSSProperties}
       >
@@ -2378,17 +2378,25 @@ function WordLookupPanel({
   // Scroll the panel into view on first appearance and again when it
   // transitions from loading → ready (since the panel grows then). 'nearest'
   // does the minimum scroll required, so it won't yank the page if the
-  // panel is already visible.
+  // panel is already visible. Mobile (<=640px) uses a fixed bottom sheet, so
+  // scrolling the panel is meaningless there — gate to desktop.
   useEffect(() => {
+    if (!window.matchMedia('(min-width: 641px)').matches) return;
     panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [lookup.kind]);
   return (
-    <div
-      ref={panelRef}
-      className={`word-lookup-panel kind-${lookup.kind}`}
-      role="dialog"
-      aria-label="Word definition"
-    >
+    <>
+      <div
+        className="word-lookup-backdrop"
+        onClick={() => dispatch({ kind: 'dismiss-lookup' })}
+        aria-hidden="true"
+      />
+      <div
+        ref={panelRef}
+        className={`word-lookup-panel kind-${lookup.kind}`}
+        role="dialog"
+        aria-label="Word definition"
+      >
       <div className="lookup-header">
         <span className="lookup-word">{lookup.word}</span>
         <button
@@ -2442,7 +2450,8 @@ function WordLookupPanel({
           )}
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }
 

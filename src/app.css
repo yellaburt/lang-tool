@@ -820,12 +820,14 @@ button.ghost {
 
 .sentence .tl {
   font-size: 1.15rem;
+  line-height: 1.7;
   color: var(--text-primary);
 }
 
 .sentence .en {
   color: var(--text-secondary);
   font-size: 0.95rem;
+  line-height: 1.4;
   margin-top: 0.25rem;
 }
 
@@ -879,11 +881,13 @@ button.ghost {
 
 .pair-tl {
   font-size: 1.2rem;
+  line-height: 1.7;
   color: var(--text-primary);
 }
 
 .pair-en {
   font-size: 1rem;
+  line-height: 1.4;
   color: var(--text-secondary);
 }
 
@@ -1017,8 +1021,13 @@ button.ghost {
   line-height: 1;
   color: var(--text-secondary);
   cursor: pointer;
-  padding: 0 0.3rem;
+  padding: 0;
   font-family: inherit;
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .lookup-dismiss:hover {
@@ -1060,6 +1069,80 @@ button.ghost {
   color: var(--text);
   opacity: 0.85;
   font-style: italic;
+}
+
+/* ===== Mobile word-lookup bottom sheet =====
+   Below 640px wide, the lookup panel pins to the bottom of the viewport as
+   a sheet with a tap-anywhere backdrop. Desktop keeps the inline-below
+   behavior — none of these rules fire above 640px. */
+.word-lookup-backdrop {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .word-lookup-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.25);
+    z-index: 90;
+    animation: backdrop-fade 150ms ease-out;
+  }
+  .word-lookup-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    margin: 0;
+    border-radius: 12px 12px 0 0;
+    border-left: none;
+    border-top: 3px solid #5b8def;
+    max-height: 50vh;
+    overflow-y: auto;
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+    z-index: 100;
+    animation: sheet-slide-up 200ms ease-out;
+  }
+  .word-lookup-panel.kind-loading {
+    border-top-color: #aaa;
+  }
+  .word-lookup-panel.kind-error {
+    border-top-color: #c44;
+  }
+  /* Grab-bar affordance at the top of the sheet. */
+  .word-lookup-panel::before {
+    content: '';
+    display: block;
+    width: 40px;
+    height: 4px;
+    background: var(--text-secondary);
+    opacity: 0.4;
+    border-radius: 2px;
+    margin: 0 auto 0.5rem;
+  }
+  /* Make room under the chunk list so the active chunk stays in view
+     above the sheet. */
+  .sentences.lookup-open {
+    padding-bottom: 55vh;
+  }
+}
+
+@keyframes sheet-slide-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes backdrop-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* ===== Misc ===== */
