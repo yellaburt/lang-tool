@@ -2425,11 +2425,18 @@ function WordLookupPanel({
   // Scroll the panel into view on first appearance and again when it
   // transitions from loading → ready (since the panel grows then). 'nearest'
   // does the minimum scroll required, so it won't yank the page if the
-  // panel is already visible. Mobile (<=640px) uses a fixed bottom sheet, so
-  // scrolling the panel is meaningless there — gate to desktop.
+  // panel is already visible. On mobile the panel is a fixed bottom sheet,
+  // so scrolling the panel itself does nothing — instead, scroll the parent
+  // sentence above the sheet so the looked-up word stays visible.
   useEffect(() => {
-    if (!window.matchMedia('(min-width: 641px)').matches) return;
-    panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (window.matchMedia('(min-width: 641px)').matches) {
+      panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } else {
+      panelRef.current?.parentElement?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    }
   }, [lookup.kind]);
   return (
     <>
@@ -2510,11 +2517,18 @@ function GrammarPanel({
   dispatch: (a: AppAction) => void;
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
-  // Mirror the word-lookup behavior: scroll the panel into view on desktop,
-  // skip on mobile (the fixed bottom sheet doesn't need it).
+  // Mirror the word-lookup behavior: on desktop scroll the panel itself into
+  // view; on mobile the panel is a fixed bottom sheet, so scroll the parent
+  // sentence above the sheet instead.
   useEffect(() => {
-    if (!window.matchMedia('(min-width: 641px)').matches) return;
-    panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (window.matchMedia('(min-width: 641px)').matches) {
+      panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } else {
+      panelRef.current?.parentElement?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    }
   }, [panel.kind]);
   return (
     <>

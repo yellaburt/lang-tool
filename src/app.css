@@ -833,6 +833,10 @@ button.ghost {
 .sentence {
   padding: 0.85rem 0;
   border-bottom: 1px solid var(--surface-divider);
+  /* Clear the sticky reading-header (title + control bar) when scrollIntoView
+     targets this sentence — without this, the top of the sentence lands behind
+     the sticky bar. */
+  scroll-margin-top: 7rem;
 }
 
 .sentence .tl {
@@ -856,8 +860,16 @@ button.ghost {
   border-left: 3px solid var(--text-secondary);
 }
 
-.sentence.past {
-  opacity: 0.75;
+/* Dim past-sentence text via color, not parent `opacity`. A parent `opacity`
+   creates a stacking group that drags `position: fixed` descendants down with
+   it — so the bottom-sheet lookup panel would render translucent whenever the
+   tapped word was in a past sentence. */
+.sentence.past .tl {
+  color: var(--text-secondary);
+}
+.sentence.past .en {
+  color: var(--text-secondary);
+  opacity: 0.7;
 }
 
 /* Lyrics mode: a line that follows a blank line in the source gets extra top
