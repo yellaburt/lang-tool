@@ -3,6 +3,7 @@ import { ChunkAndGloss } from './prompt';
 import {
   Chunk,
   ChunkId,
+  ChunkingMode,
   GrammarExplanation,
   LearnerState,
   Passage,
@@ -110,6 +111,7 @@ interface PassageRow {
   last_opened_at?: string;
   folder?: string | null;
   subfolder?: string | null;
+  chunking_mode?: string | null;
 }
 
 function passageFromRow(row: PassageRow): Passage {
@@ -126,6 +128,7 @@ function passageFromRow(row: PassageRow): Passage {
     lastReadChunkIndex: row.last_read_chunk_index ?? 0,
     sentenceCount: row.sentence_count,
     processingStatus: row.processing_status,
+    chunkingMode: row.chunking_mode === 'lyrics' ? 'lyrics' : 'prose',
     folder: row.folder ?? null,
     subfolder: row.subfolder ?? null,
   };
@@ -160,6 +163,7 @@ export async function insertPassage(passage: Passage, ownerId: string): Promise<
     processing_status: passage.processingStatus,
     sentence_count: passage.sentenceCount,
     created_at: new Date(passage.createdAt).toISOString(),
+    chunking_mode: passage.chunkingMode,
     folder: passage.folder,
     subfolder: passage.subfolder,
   });
@@ -295,13 +299,17 @@ class NonRetryableError extends Error {}
 // loop in callChunkAndGloss also stops.
 export class ContentRefusedError extends NonRetryableError {}
 
-export async function callChunkAndGloss(text: string): Promise<ReadonlyArray<ChunkAndGloss>> {
+export async function callChunkAndGloss(
+  text: string,
+  options: { chunkingMode?: ChunkingMode } = {},
+): Promise<ReadonlyArray<ChunkAndGloss>> {
   // Retry transient failures (EarlyDrop, network blips, 5xx) silently. Most
   // of the failures we see are these — auto-retry usually wins before the
   // user notices anything. Auth errors aren't retried since they won't
   // resolve themselves.
   const maxAttempts = 3;
   let lastErr: unknown = null;
+  const chunkingMode: ChunkingMode = options.chunkingMode ?? 'prose';
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (attempt > 1) {
       // Exponential backoff: ~1s, ~2s between attempts (≤3s total wait).
@@ -310,7 +318,7 @@ export async function callChunkAndGloss(text: string): Promise<ReadonlyArray<Chu
     }
     try {
       const { data, error } = await supabase.functions.invoke('chunk-and-gloss', {
-        body: { text },
+        body: { text, chunkingMode },
       });
       if (error) {
         lastErr = error;

@@ -32,12 +32,12 @@ Anthropic's recent guidance, Sonnet is the recommended starting point for
 coding workflows and is the daily-driver default in Claude Code.
 
 **Drop to Claude Haiku 4.5** (`claude-haiku-4-5-20251001`) for the most
-mechanical tasks: Task 1's CSS work, Task 4's simple settings field addition,
+mechanical tasks: Task 1's CSS work, Task 5's simple settings field addition,
 small UI tweaks. Haiku iterates fast and is plenty capable for well-scoped
 single-file work.
 
 **Reach for Claude Opus 4.7** (`claude-opus-4-7`) only when:
-- Sonnet gets stuck on the speech-effects refactor in Task 3.
+- Sonnet gets stuck on the speech-effects refactor in Task 4.
 - You want a second opinion on a design decision before committing to it.
 - You hit a real debugging puzzle that needs deeper reasoning.
 
@@ -51,20 +51,23 @@ Use `/model` in Claude Code to switch per session.
 ## Build order
 
 Each task is intended as one Claude Code session (an evening's work). The
-ordering is deliberate but tasks 5-7 are independent of tasks 1-4 and can
+ordering is deliberate but tasks 6-8 are independent of tasks 1-5 and can
 interleave.
 
 1. Mobile word-tap fixes
-2. Grammar note feature (on-demand per-chunk grammar explanation)
-3. Light reading mode (mode logic + UI + auto-advance timer)
-4. Per-user default reading mode (settings + migration)
-5. Book ingestion (paste view + heuristic chapter splitter)
-6. Folder-as-book rendering (compact display when a folder looks like a book)
-7. Next-chapter navigation (continue button at end of chapter)
+2. Song lyrics chunking mode (line-based chunking + lyrics flag)
+3. Grammar note feature (on-demand per-chunk grammar explanation)
+4. Light reading mode (mode logic + UI + auto-advance timer)
+5. Per-user default reading mode (settings + migration)
+6. Book ingestion (paste view + heuristic chapter splitter)
+7. Folder-as-book rendering (compact display when a folder looks like a book)
+8. Next-chapter navigation (continue button at end of chapter)
 
 ---
 
 ## Task 1: Mobile word-tap fixes
+
+**Status:** Completed.
 
 **Goal:** Reduce mis-taps when looking up words on phone, and stop the lookup
 panel from pushing the chunk off-screen on small viewports.
@@ -109,7 +112,123 @@ panel from pushing the chunk off-screen on small viewports.
 
 ---
 
-## Task 2: Grammar note feature
+## Task 2: Song lyrics chunking mode
+
+**Status:** Completed.
+
+**Goal:** Add an alternative chunking mode that splits text by line instead of
+by sentence, for learning Spanish from song lyrics. Each non-empty line
+becomes a chunk. Blank-line stanza breaks are preserved visually. Everything
+downstream — TTS, word lookup, grammar feature when it ships — works
+automatically on lyrics chunks.
+
+This is an Adryane-pull feature: she asked for it directly. Lyrics-based
+learning is pedagogically defensible (Krashen endorsed it; the repetition in
+choruses does real vocabulary work; melody attaches to memory in ways prose
+can't), but the primary reason it jumps the queue is that it's a user request,
+small in scope, and unlocks engagement immediately.
+
+**Files:**
+- `src/core.ts` — `splitLyricsIntoLines` function
+- `src/types.ts` — `chunkingMode` on Passage, optional `precededByBlankLine` on chunks
+- `src/views.tsx` — PasteView checkbox, ReadingView verse-break rendering
+- `src/app.tsx` — wire chunking mode through the processing pipeline
+- `supabase/functions/chunk-and-gloss/index.ts` — accept a lyrics flag, prompt addendum
+- `supabase/migrations/<timestamp>_lyrics_mode.sql` — `chunking_mode` column on passages
+
+**Changes:**
+
+1. **Chunker in core.ts:**
+   ```ts
+   type LyricsChunk = { text: string; precededByBlankLine: boolean }
+   function splitLyricsIntoLines(text: string): LyricsChunk[]
+   ```
+   Split on newlines. For each non-empty line, emit a chunk with the trimmed
+   text. Mark `precededByBlankLine: true` if the previous line was empty (or
+   if this is the first chunk after leading blank lines). Each line is its
+   own chunk — do not merge consecutive lines.
+
+2. **Passage and chunk types:**
+   Add `chunkingMode: 'prose' | 'lyrics'` to the Passage schema, default
+   `'prose'`. Add `precededByBlankLine?: boolean` to the chunk type
+   (optional; omitted in prose mode for backward compatibility).
+
+3. **Migration:**
+   Add `chunking_mode TEXT NOT NULL DEFAULT 'prose'` to the `passages`
+   table. Existing rows inherit `'prose'`. No backfill needed.
+
+4. **PasteView checkbox:**
+   A simple checkbox below the text area: "These are song lyrics" (or
+   "Lyrics mode"). When checked, the resulting passage gets
+   `chunkingMode: 'lyrics'`. Do not attempt to auto-detect lyrics from
+   pasted text — short paragraphs in articles look like lyrics, and a
+   surprise misdetection is worse than one extra click.
+
+5. **App.tsx processing pipeline:**
+   When chunking, branch on `passage.chunkingMode`:
+   - `'prose'`: existing `splitSentences` + 2-sentence batching (unchanged)
+   - `'lyrics'`: `splitLyricsIntoLines`; each line is its own batch (1:1, no
+     batching across lines)
+
+   Pass `chunkingMode` through to the chunk-and-gloss Edge Function call so
+   the prompt can adjust.
+
+6. **chunk-and-gloss Edge Function:**
+   Accept an optional `chunkingMode` parameter. When `'lyrics'`, prepend an
+   addendum to the system prompt:
+
+   > "This text is song lyrics. Expect non-standard grammar, poetic word
+   > order for rhyme/meter, dropped subjects, and metaphorical or
+   > figurative language. Gloss the meaning, not the surface words, where
+   > they diverge. Don't flag poetic devices as errors. Word lookups should
+   > account for non-literal senses where context suggests them."
+
+   The cache key for chunks must include `chunkingMode` (or include the
+   addendum text in whatever hashing the cache uses), so a chunk processed
+   as lyrics doesn't return a cache hit from a prior prose processing of
+   the same text. Check the existing cache key logic; if it doesn't already
+   cover prompt variation, fix it as part of this task.
+
+7. **ReadingView verse-break rendering:**
+   When rendering a chunk with `precededByBlankLine: true`, add a margin-top
+   (or a thin horizontal divider) to visually indicate the stanza break.
+   Small detail with outsized visual payoff — songs without visible stanza
+   breaks read like a wall of text.
+
+**Acceptance:**
+- Paste lyrics, check "Lyrics mode", save → each line is its own chunk,
+  empty-line stanza breaks render as extra space between chunks.
+- Audio (TTS), word lookup, and grammar (when shipped) work on lyrics
+  chunks identically to prose chunks.
+- A repeated chorus appears as repeated chunks (this is correct; the
+  repetition *is* the learning value).
+- Existing prose passages continue to chunk and render unchanged.
+
+**Gotchas:**
+- For a 60-line song, lyrics mode means 60 Edge Function calls vs. ~30 if
+  the same text were processed as prose batches. Cost is bounded but ~2x.
+  Acceptable for now; revisit if a user processes many long songs and
+  costs become noticeable. A small future optimization: batch 2-3 lines
+  per chunk-and-gloss call but render them as separate chunks. Don't do
+  that yet — premature optimization complicates the prompt schema.
+- TTS reads lyrics like prose — no melody, just the words at speaking
+  cadence. This is a real limitation. Adryane should listen to the actual
+  recording (Spotify, YouTube) separately to attach the melody to the
+  meaning. The app handles the language; the recording handles the music.
+- Light reading mode (Task 4) auto-advance defaults are tuned for prose
+  chunks of 2 sentences. Lyrics lines are much shorter; an 8-second
+  default would feel like the app is broken. Either pick a shorter default
+  in lyrics mode (3s), or make the timer chunk-length-aware when Task 4
+  ships. Note for future cross-task work; not blocking for this task.
+- Don't auto-detect lyrics. The temptation will be real; resist it. An
+  explicit checkbox is one click and never wrong. Add detection later as
+  a v2 polish if a user explicitly requests it.
+
+---
+
+## Task 3: Grammar note feature
+
+**Status:** Completed.
 
 **Goal:** Add an on-demand grammar explanation panel per chunk. The user taps
 a **Grammar** button on any chunk; an Edge Function asks Haiku to explain
@@ -226,7 +345,7 @@ the meaning lands but the form's contribution to meaning doesn't.
 
 ---
 
-## Task 3: Light reading mode
+## Task 4: Light reading mode
 
 **Goal:** Add the third reading mode with button-gated English reveal and an
 auto-advance timer.
@@ -320,7 +439,7 @@ auto-advance timer.
 
 ---
 
-## Task 4: Per-user default reading mode
+## Task 5: Per-user default reading mode
 
 **Goal:** DPD and ARD have different default modes on sign-in (DPD: light,
 ARD: scaffolded). Both can still toggle per session.
@@ -352,7 +471,7 @@ ARD: scaffolded). Both can still toggle per session.
 
 ---
 
-## Task 5: Book ingestion
+## Task 6: Book ingestion
 
 **Goal:** Pasting a long text (Mother Night, a Vonnegut anthology, a
 Project Gutenberg classic) and choosing **Add as book** creates a folder
@@ -434,7 +553,7 @@ processing.
 
 ---
 
-## Task 6: Folder-as-book rendering
+## Task 7: Folder-as-book rendering
 
 **Goal:** When a folder contains many sequentially-numbered passages, render
 it compactly so the library doesn't become a 40-row wall.
@@ -485,7 +604,7 @@ it compactly so the library doesn't become a 40-row wall.
 
 ---
 
-## Task 7: Next-chapter navigation
+## Task 8: Next-chapter navigation
 
 **Goal:** When you finish reading a passage in a book-like folder, show a
 "Continue to next chapter →" button.
@@ -504,7 +623,7 @@ it compactly so the library doesn't become a 40-row wall.
    ): Passage | null
    ```
    Filter to passages in the same folder, sort by detected chapter number
-   (parse the title; reuse Task 5's regex), fall back to creation order,
+   (parse the title; reuse Task 6's regex), fall back to creation order,
    return the one immediately after current. Null if current is last.
 
 2. **ReadingView:** When `lastReadChunkIndex` reaches `chunks.length - 1`
@@ -521,7 +640,7 @@ it compactly so the library doesn't become a 40-row wall.
 
 **Gotchas:**
 - Chapter-number parsing needs to handle Arabic, Roman, and "Part N" formats.
-  Reuse the regex from Task 5.
+  Reuse the regex from Task 6.
 - Only show this for book-like folders. Auto-advancing from "Article 1" to
   "Article 2" in a generic folder would be surprising.
 

@@ -15,6 +15,7 @@ import {
   recordChunkExposure,
   recordExposure,
   shouldInterleaveQuestion,
+  splitLyricsIntoLines,
 } from './core';
 import {
   Chunk,
@@ -164,6 +165,50 @@ describe('chunkPassage sub-sentence splitting', () => {
     expect(sentence0.length).toBeGreaterThanOrEqual(2);
     expect(sentence1.length).toBe(1);
     expect(sentence1[0]!.tlText).toBe('Empezó una nueva semana.');
+  });
+});
+
+// --- Lyrics splitting ---
+
+describe('splitLyricsIntoLines', () => {
+  it('emits one line per non-empty source line', () => {
+    const out = splitLyricsIntoLines('Line one\nLine two\nLine three');
+    expect(out.map((l) => l.text)).toEqual(['Line one', 'Line two', 'Line three']);
+    expect(out.every((l) => !l.precededByBlankLine)).toBe(true);
+  });
+
+  it('flags lines after a blank line', () => {
+    const out = splitLyricsIntoLines('A\nB\n\nC\nD');
+    expect(out.map((l) => l.text)).toEqual(['A', 'B', 'C', 'D']);
+    expect(out.map((l) => l.precededByBlankLine)).toEqual([false, false, true, false]);
+  });
+
+  it('treats multiple consecutive blank lines like one', () => {
+    const out = splitLyricsIntoLines('A\n\n\n\nB');
+    expect(out.map((l) => l.precededByBlankLine)).toEqual([false, true]);
+  });
+
+  it('flags the first line when the source begins with blank lines', () => {
+    const out = splitLyricsIntoLines('\n\nA\nB');
+    expect(out.map((l) => l.text)).toEqual(['A', 'B']);
+    expect(out.map((l) => l.precededByBlankLine)).toEqual([true, false]);
+  });
+
+  it('trims whitespace per line and skips whitespace-only lines', () => {
+    const out = splitLyricsIntoLines('  A  \n   \n B ');
+    expect(out.map((l) => l.text)).toEqual(['A', 'B']);
+    expect(out.map((l) => l.precededByBlankLine)).toEqual([false, true]);
+  });
+
+  it('handles CRLF line endings', () => {
+    const out = splitLyricsIntoLines('A\r\n\r\nB');
+    expect(out.map((l) => l.text)).toEqual(['A', 'B']);
+    expect(out.map((l) => l.precededByBlankLine)).toEqual([false, true]);
+  });
+
+  it('returns empty array for empty / whitespace-only input', () => {
+    expect(splitLyricsIntoLines('')).toEqual([]);
+    expect(splitLyricsIntoLines('   \n  \n')).toEqual([]);
   });
 });
 
@@ -381,6 +426,7 @@ describe('state reducers', () => {
       lastReadChunkIndex: 0,
       sentenceCount: 1,
       processingStatus: { kind: 'complete' },
+      chunkingMode: 'prose',
       folder: null,
       subfolder: null,
     };

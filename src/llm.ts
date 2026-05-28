@@ -4,15 +4,17 @@
 
 import { ChunkAndGloss } from './prompt';
 import { callChunkAndGloss } from './supabase';
+import { ChunkingMode } from './types';
 
 export type { ChunkAndGloss } from './prompt';
 
 export async function splitAndGloss(
   passage: string,
+  options: { chunkingMode?: ChunkingMode } = {},
 ): Promise<ReadonlyArray<ChunkAndGloss>> {
   const cleaned = passage.trim();
   if (cleaned.length === 0) return [];
-  return callChunkAndGloss(cleaned);
+  return callChunkAndGloss(cleaned, options);
 }
 
 // Retained for backward compatibility with views that gate UI on whether the

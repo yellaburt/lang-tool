@@ -1175,16 +1175,18 @@ function PassageRow({
 // === Paste view ===
 
 export function PasteView({ state, dispatch }: ViewProps) {
+  const [lyricsMode, setLyricsMode] = useState(false);
   const canStart = state.ui.draftText.trim().length > 0;
+  const chunkingMode = lyricsMode ? 'lyrics' : 'prose';
   function onStart() {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-    const passage = buildEmptyPassage(state.ui.draftText);
+    const passage = buildEmptyPassage(state.ui.draftText, { chunkingMode });
     if (passage === null) return;
     dispatch({ kind: 'start-passage', passage });
   }
   function onSave() {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-    const passage = buildEmptyPassage(state.ui.draftText);
+    const passage = buildEmptyPassage(state.ui.draftText, { chunkingMode });
     if (passage === null) return;
     dispatch({ kind: 'save-passage', passage });
   }
@@ -1211,11 +1213,19 @@ export function PasteView({ state, dispatch }: ViewProps) {
         className="paste-box"
         value={state.ui.draftText}
         onChange={(e) => dispatch({ kind: 'set-draft', text: e.target.value })}
-        placeholder="Pega aquí…"
+        placeholder={lyricsMode ? 'Pega las letras aquí…' : 'Pega aquí…'}
         rows={12}
         spellCheck={false}
         lang="es"
       />
+      <label className="paste-lyrics-toggle">
+        <input
+          type="checkbox"
+          checked={lyricsMode}
+          onChange={(e) => setLyricsMode(e.target.checked)}
+        />
+        <span>Song lyrics (split by line, keep stanza breaks)</span>
+      </label>
       <div className="actions">
         <button type="button" disabled={!canStart} onClick={onStart}>
           Start reading
@@ -1923,6 +1933,10 @@ function SentenceItem({
     wordLookup !== null && sentence.some((c) => c.id === wordLookup.chunkId);
   const grammarInThisSentence =
     grammarPanel !== null && sentence.some((c) => c.id === grammarPanel.chunkId);
+  // Lyrics mode: the first sub-chunk of a line that follows a blank line in
+  // the source carries precededByBlankLine. The render then adds extra top
+  // spacing so stanzas read as stanzas, not as a wall of text.
+  const stanzaBreak = sentence[0]?.precededByBlankLine === true;
 
   if (!hasCurrent) {
     // Past sentence: flowing Spanish paragraph + flowing English paragraph.
@@ -1934,7 +1948,7 @@ function SentenceItem({
       .map((c) => c.englishGloss)
       .join(' ');
     return (
-      <li className="sentence past">
+      <li className={'sentence past' + (stanzaBreak ? ' stanza-break' : '')}>
         <div className="tl">
           {sentence.map((c, i) => (
             <span key={c.id}>
@@ -1960,7 +1974,7 @@ function SentenceItem({
   const visibleSubChunks = sentence.filter((c) => c.index <= currentChunkIndex);
 
   return (
-    <li className="sentence current">
+    <li className={'sentence current' + (stanzaBreak ? ' stanza-break' : '')}>
       <div className="pairs">
         {visibleSubChunks.map((c) => {
           const isCurrentSub = c.index === currentChunkIndex;

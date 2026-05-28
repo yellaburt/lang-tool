@@ -1,6 +1,13 @@
 import type { ReactElement } from 'react';
 import { useEffect, useReducer, useRef, useState } from 'react';
-import { addPassage, assertNever, emptyLearnerState, IdGen, splitSentences } from './core';
+import {
+  addPassage,
+  assertNever,
+  emptyLearnerState,
+  IdGen,
+  splitLyricsIntoLines,
+  splitSentences,
+} from './core';
 import { splitAndGloss } from './llm';
 import { loadLearnerState } from './storage';
 import {
@@ -24,6 +31,7 @@ import {
 import {
   Chunk,
   ChunkId,
+  ChunkingMode,
   EmphasisStyle,
   GrammarExplanation,
   LearnerState,
@@ -1070,11 +1078,21 @@ const PREFETCH_LEAD_CHUNKS = 3;
  *
  * Returns null if the input is empty or has no extractable sentences.
  */
-export function buildEmptyPassage(rawText: string): Passage | null {
-  const text = rawText.trim();
+export function buildEmptyPassage(
+  rawText: string,
+  options: { chunkingMode?: ChunkingMode } = {},
+): Passage | null {
+  // Prose passages are trimmed; lyrics passages preserve internal blank lines
+  // (the stanza-break signal) but still strip leading/trailing whitespace.
+  const chunkingMode: ChunkingMode = options.chunkingMode ?? 'prose';
+  const text =
+    chunkingMode === 'lyrics' ? rawText.replace(/^\s+|\s+$/g, '') : rawText.trim();
   if (text.length === 0) return null;
-  const sentences = splitSentences(text);
-  if (sentences.length === 0) return null;
+  const sentenceCount =
+    chunkingMode === 'lyrics'
+      ? splitLyricsIntoLines(text).length
+      : splitSentences(text).length;
+  if (sentenceCount === 0) return null;
   const now = Date.now();
   return {
     id: ids.newPassageId(),
@@ -1085,8 +1103,9 @@ export function buildEmptyPassage(rawText: string): Passage | null {
     createdAt: now,
     lastOpenedAt: now,
     lastReadChunkIndex: 0,
-    sentenceCount: sentences.length,
+    sentenceCount,
     processingStatus: { kind: 'in-progress', processedSentenceCount: 0 },
+    chunkingMode,
     folder: null,
     subfolder: null,
   };
@@ -1450,12 +1469,30 @@ export function App() {
       passage.chunks.length === 0 || chunksRemaining <= PREFETCH_LEAD_CHUNKS;
     if (!needsFetch) return;
 
-    // Compute the next batch from the local sentence split.
-    const sentences = splitSentences(passage.rawText);
-    const batchSentences = sentences.slice(processed, processed + SENTENCES_PER_BATCH);
-    if (batchSentences.length === 0) return;
-    const batchText = batchSentences.join(' ');
-    const newProcessedCount = processed + batchSentences.length;
+    // Compute the next batch from the local source split. Lyrics mode batches
+    // one line at a time (so chunkingMode 'lyrics' overrides SENTENCES_PER_BATCH
+    // to 1) and carries the stanza-break flag forward onto the first emitted
+    // chunk; prose mode batches SENTENCES_PER_BATCH source sentences as one
+    // joined string.
+    const isLyrics = passage.chunkingMode === 'lyrics';
+    let batchText: string;
+    let batchUnitCount: number;
+    let precededByBlankLine = false;
+    if (isLyrics) {
+      const lines = splitLyricsIntoLines(passage.rawText);
+      const line = lines[processed];
+      if (!line) return;
+      batchText = line.text;
+      batchUnitCount = 1;
+      precededByBlankLine = line.precededByBlankLine;
+    } else {
+      const sentences = splitSentences(passage.rawText);
+      const batchSentences = sentences.slice(processed, processed + SENTENCES_PER_BATCH);
+      if (batchSentences.length === 0) return;
+      batchText = batchSentences.join(' ');
+      batchUnitCount = batchSentences.length;
+    }
+    const newProcessedCount = processed + batchUnitCount;
     // Sub-chunks inside this batch will get sentenceIndex 0..N-1 from the
     // LLM. Shift them up by the count of sentences already processed so the
     // global sentence indexing remains correct across batches.
@@ -1466,7 +1503,9 @@ export function App() {
 
     void (async () => {
       try {
-        const chunkDataRaw = await splitAndGloss(batchText);
+        const chunkDataRaw = await splitAndGloss(batchText, {
+          chunkingMode: passage.chunkingMode,
+        });
         // Filter out chunks whose Spanish text contains no letters or digits
         // (just punctuation like "." or "—"). Claude occasionally emits these
         // as standalone chunks; they have no audio or learning value and
@@ -1490,6 +1529,11 @@ export function App() {
           tlText: cg.tlText,
           englishGloss: cg.englishGloss,
           audioRef: null,
+          // Lyrics-only: tag the FIRST sub-chunk of a line that follows a
+          // blank line so rendering can draw a stanza break above it. Sub-
+          // chunks past the first inherit no flag — the break sits at the
+          // top of the line, not between its parts.
+          ...(i === 0 && precededByBlankLine ? { precededByBlankLine: true } : {}),
         }));
         dispatch({
           kind: 'append-chunks',
@@ -1511,6 +1555,7 @@ export function App() {
             tlText: '[…]',
             englishGloss: '[Skipped — translation service declined this section]',
             audioRef: null,
+            ...(precededByBlankLine ? { precededByBlankLine: true } : {}),
           };
           dispatch({
             kind: 'skip-batch',

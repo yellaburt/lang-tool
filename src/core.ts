@@ -130,6 +130,35 @@ export function splitSentences(rawText: string): ReadonlyArray<string> {
   return splitOnTerminalPunctuation(rawText);
 }
 
+export interface LyricsLine {
+  readonly text: string;
+  // True if there was at least one blank (whitespace-only) line immediately
+  // before this one in the source. The first non-empty line is also flagged
+  // true if the source begins with blank lines, so a song that opens with
+  // whitespace still renders as starting a stanza. Each line is 1:1 with a
+  // batch — no merging across lines.
+  readonly precededByBlankLine: boolean;
+}
+
+// Lyrics splitter — for song-lyric passages where line breaks are
+// load-bearing. Splits on \n (CRLF tolerant). Empty / whitespace-only lines
+// are not emitted as their own chunks; instead they flag the next non-empty
+// line as a stanza opener via precededByBlankLine.
+export function splitLyricsIntoLines(rawText: string): ReadonlyArray<LyricsLine> {
+  const out: LyricsLine[] = [];
+  let pendingBlank = false;
+  for (const raw of rawText.split(/\r?\n/)) {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) {
+      pendingBlank = true;
+      continue;
+    }
+    out.push({ text: trimmed, precededByBlankLine: pendingBlank });
+    pendingBlank = false;
+  }
+  return out;
+}
+
 // Count "significant new words" in a Spanish chunk relative to its English
 // gloss. Used to decide whether re-read should fire on short chunks. Rules:
 //   - Letter-word that ALSO appears in the English gloss (case-insensitive):

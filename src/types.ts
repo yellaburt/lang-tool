@@ -48,6 +48,11 @@ export type ProcessingStatus =
   | { readonly kind: 'complete' }
   | { readonly kind: 'error'; readonly message: string };
 
+// 'prose' (default): split on sentence-ending punctuation, batch ~2 sentences
+// per LLM call. 'lyrics': split on newlines, one line per LLM call, blank
+// lines mark stanza breaks. Set once at creation; not user-editable after.
+export type ChunkingMode = 'prose' | 'lyrics';
+
 export interface Passage {
   readonly id: PassageId;
   readonly title: string;
@@ -59,8 +64,10 @@ export interface Passage {
   readonly lastReadChunkIndex: number;
   // Total source sentences (locally split, no LLM). chunks.length grows as
   // batches are processed; processingStatus tracks how many sentences are done.
+  // For lyrics mode, "sentence" means "non-empty line".
   readonly sentenceCount: number;
   readonly processingStatus: ProcessingStatus;
+  readonly chunkingMode: ChunkingMode;
   // Optional two-level library organization. null = top-level (no folder).
   // subfolder may only be set when folder is also set.
   readonly folder: string | null;
@@ -75,6 +82,11 @@ export interface Chunk {
   readonly tlText: string;
   readonly englishGloss: string | null;
   readonly audioRef: string | null;
+  // Lyrics mode only. Set on the first sub-chunk of any line that follows a
+  // blank line (and on the first chunk of the passage if the source begins
+  // with blank lines). Rendering uses this to draw a stanza break above.
+  // Omitted in prose mode for backward compatibility.
+  readonly precededByBlankLine?: boolean;
 }
 
 export type VocabItem =

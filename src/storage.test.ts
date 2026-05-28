@@ -52,6 +52,7 @@ function samplePassage(id: string, lastReadChunkIndex = 0): Passage {
     lastReadChunkIndex,
     sentenceCount: 1,
     processingStatus: { kind: 'complete' },
+    chunkingMode: 'prose',
     folder: null,
     subfolder: null,
   };

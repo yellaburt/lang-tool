@@ -74,6 +74,13 @@ Note: the Spanish in Example 2 is your translation; the English glosses are the 
 
 Call split_and_gloss with your output. Do not include any text outside the tool call.`;
 
+// Prepended to SYSTEM_PROMPT when the caller flags this batch as song lyrics.
+// Keeps the model from second-guessing poetic word order or non-literal
+// imagery the way it would on a news article.
+const LYRICS_ADDENDUM = `This text is song lyrics. Expect non-standard grammar, poetic word order for rhyme or meter, dropped subjects, and metaphorical or figurative language. Gloss the meaning, not the surface words, where they diverge. Don't flag poetic devices as errors. Word lookups should account for non-literal senses where context suggests them.
+
+`;
+
 const TOOL = {
   name: 'split_and_gloss',
   description: 'Break Spanish text into comprehensible-sized chunks with English glosses.',
@@ -145,7 +152,7 @@ Deno.serve(async (req) => {
   }
 
   // Parse request body.
-  let body: { text?: unknown };
+  let body: { text?: unknown; chunkingMode?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -155,6 +162,8 @@ Deno.serve(async (req) => {
   if (text.length === 0) {
     return jsonResponse({ error: 'No text provided' }, 400);
   }
+  const chunkingMode: 'prose' | 'lyrics' =
+    body.chunkingMode === 'lyrics' ? 'lyrics' : 'prose';
 
   // Call Anthropic with a Haiku→Sonnet fallback.
   const client = new Anthropic({ apiKey: anthropicKey });
@@ -163,7 +172,7 @@ Deno.serve(async (req) => {
     let result: { chunks: ValidatedChunk[]; model: string };
     try {
       // Primary: Haiku — fast and cheap, handles ~95%+ of batches.
-      result = await callModel(client, text, PRIMARY_MODEL, PRIMARY_TIMEOUT_MS);
+      result = await callModel(client, text, PRIMARY_MODEL, PRIMARY_TIMEOUT_MS, chunkingMode);
     } catch (primaryErr) {
       const primaryMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
       // If Anthropic itself is overloaded (HTTP 529), Sonnet hits the same
@@ -181,7 +190,7 @@ Deno.serve(async (req) => {
         });
       }
       console.warn(`Haiku failed (${primaryMsg}); falling back to Sonnet`);
-      result = await callModel(client, text, FALLBACK_MODEL, FALLBACK_TIMEOUT_MS);
+      result = await callModel(client, text, FALLBACK_MODEL, FALLBACK_TIMEOUT_MS, chunkingMode);
     }
     return jsonResponse({
       chunks: result.chunks,
@@ -241,14 +250,25 @@ async function callModel(
   text: string,
   model: string,
   timeoutMs: number,
+  chunkingMode: 'prose' | 'lyrics' = 'prose',
 ): Promise<{ chunks: ValidatedChunk[]; model: string }> {
+  // For lyrics, the addendum precedes the cached SYSTEM_PROMPT block. The
+  // shared prefix still benefits from Anthropic's ephemeral cache; the
+  // addendum is small enough that re-sending it per request is fine.
+  const systemBlocks =
+    chunkingMode === 'lyrics'
+      ? [
+          { type: 'text' as const, text: LYRICS_ADDENDUM },
+          { type: 'text' as const, text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' as const } },
+        ]
+      : [
+          { type: 'text' as const, text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' as const } },
+        ];
   const response = await withTimeout(
     client.messages.create({
       model,
       max_tokens: 8192,
-      system: [
-        { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
-      ],
+      system: systemBlocks,
       messages: [{ role: 'user', content: text }],
       tools: [TOOL],
       tool_choice: { type: 'tool', name: 'split_and_gloss' },
