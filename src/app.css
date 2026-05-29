@@ -577,6 +577,10 @@ button.ghost {
   min-height: 0; /* required so the flex child can shrink and actually scroll */
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  /* Keep the line being read off the very bottom edge: every scrollIntoView
+     leaves ~one line of breathing room beneath the active row, so its lower
+     (English) half is never flush against — or clipped by — the bottom. */
+  scroll-padding-bottom: 3rem;
 }
 
 /* Passage title + controls: a non-shrinking flex header pinned above the
@@ -1290,8 +1294,11 @@ button.ghost {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(1.5rem + env(safe-area-inset-bottom));
+  bottom: calc(0.5rem + env(safe-area-inset-bottom));
   z-index: 60;
+  /* fixed + left:50% with no width caps shrink-to-fit at half the viewport,
+     which wrapped "resume" onto a second line — keep it on one line. */
+  white-space: nowrap;
   padding: 0.6rem 1.4rem;
   font-size: 1rem;
   font-weight: 600;
