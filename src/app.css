@@ -1226,7 +1226,10 @@ button.ghost {
     border-radius: 12px 12px 0 0;
     border-left: none;
     border-top: 3px solid #5b8def;
-    max-height: 50vh;
+    /* Size to content. Cap just below the viewport so a long definition can't
+       grow past the top of the screen; short ones stay short. */
+    max-height: 85vh;
+    max-height: 85dvh;
     overflow-y: auto;
     padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
     z-index: 100;
@@ -1242,18 +1245,6 @@ button.ghost {
   .word-lookup-panel.kind-error,
   .grammar-panel.kind-error {
     border-top-color: #c44;
-  }
-  /* Grab-bar affordance at the top of the sheet. */
-  .word-lookup-panel::before,
-  .grammar-panel::before {
-    content: '';
-    display: block;
-    width: 40px;
-    height: 4px;
-    background: var(--text-secondary);
-    opacity: 0.4;
-    border-radius: 2px;
-    margin: 0 auto 0.5rem;
   }
   /* Make room under the chunk list so the active chunk stays in view
      above the sheet. */
