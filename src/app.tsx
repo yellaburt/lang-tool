@@ -1521,20 +1521,37 @@ export function App() {
           });
           return;
         }
-        const newChunks: Chunk[] = chunkData.map((cg, i) => ({
-          id: ids.newChunkId(),
-          passageId,
-          index: startIndex + i,
-          sentenceIndex: sentenceOffset + cg.sentenceIndex,
-          tlText: cg.tlText,
-          englishGloss: cg.englishGloss,
-          audioRef: null,
-          // Lyrics-only: tag the FIRST sub-chunk of a line that follows a
-          // blank line so rendering can draw a stanza break above it. Sub-
-          // chunks past the first inherit no flag — the break sits at the
-          // top of the line, not between its parts.
-          ...(i === 0 && precededByBlankLine ? { precededByBlankLine: true } : {}),
-        }));
+        // Lyrics: a source line is the atomic unit. Collapse the model's
+        // response for this one line into exactly ONE chunk — the whole
+        // Spanish line beside the whole line's English meaning. Alignment then
+        // can't drift across sub-chunks no matter how the model split its
+        // answer (the edge function is also told to return a single chunk, so
+        // this is usually a 1-element join). sentenceIndex is the line's
+        // global index, so each line renders as its own row with its own
+        // stanza-break flag. Prose keeps per-sentence sub-chunking, shifting
+        // the model's 0..N-1 sentenceIndex up by the count already processed.
+        const newChunks: Chunk[] = isLyrics
+          ? [
+              {
+                id: ids.newChunkId(),
+                passageId,
+                index: startIndex,
+                sentenceIndex: processed,
+                tlText: chunkData.map((cg) => cg.tlText).join(' '),
+                englishGloss: chunkData.map((cg) => cg.englishGloss).join(' '),
+                audioRef: null,
+                ...(precededByBlankLine ? { precededByBlankLine: true } : {}),
+              },
+            ]
+          : chunkData.map((cg, i) => ({
+              id: ids.newChunkId(),
+              passageId,
+              index: startIndex + i,
+              sentenceIndex: sentenceOffset + cg.sentenceIndex,
+              tlText: cg.tlText,
+              englishGloss: cg.englishGloss,
+              audioRef: null,
+            }));
         dispatch({
           kind: 'append-chunks',
           passageId,

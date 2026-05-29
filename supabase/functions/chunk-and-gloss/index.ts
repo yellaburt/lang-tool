@@ -79,6 +79,8 @@ Call split_and_gloss with your output. Do not include any text outside the tool 
 // imagery the way it would on a news article.
 const LYRICS_ADDENDUM = `This text is song lyrics. Expect non-standard grammar, poetic word order for rhyme or meter, dropped subjects, and metaphorical or figurative language. Gloss the meaning, not the surface words, where they diverge. Don't flag poetic devices as errors. Word lookups should account for non-literal senses where context suggests them.
 
+LYRICS CHUNKING OVERRIDE — this takes priority over the chunk-size and splitting rules below. The input is exactly ONE line of a song and is the atomic unit. Return EXACTLY ONE chunk: tlText is the whole Spanish line, englishGloss is the whole line's English meaning, and sentenceIndex is 0. Do NOT split the line into multiple chunks even if it exceeds 15 words. The 15-word maximum and every splitting rule below DO NOT APPLY to lyrics.
+
 `;
 
 const TOOL = {
