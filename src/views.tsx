@@ -1787,7 +1787,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   }
 
   return (
-    <main className="container">
+    <main className="container reading-container">
       <div className="reading-sticky-top">
         <header className="reading-header">
           <h2 className="passage-title">{passage.title}</h2>
@@ -1809,6 +1809,12 @@ export function ReadingView({ state, dispatch }: ViewProps) {
         <ControlBar isPaused={isPaused} dispatch={dispatch} />
       </div>
 
+      {/* Inner scroll container sized to the dynamic (actually-visible)
+          viewport via .reading-container, so the active-line auto-scroll
+          centers against what's visible — not the larger layout viewport
+          whose extra height (the mobile browser's dynamic toolbar) used to
+          push the line's lower half off the bottom of the screen. */}
+      <div className="reading-scroll">
       <ol
         className={
           'sentences' +
@@ -1879,13 +1885,13 @@ export function ReadingView({ state, dispatch }: ViewProps) {
         </div>
       )}
 
-      {/* Scroll runway. The active line is always the LAST rendered line (the
-          list is filtered to index <= currentChunkIndex), so there is nothing
-          below it for scrollIntoView({block:'center'}) to scroll into — it
-          clamps the line to the bottom of the document, where the phone
-          browser's chrome / safe-area clips its lower half. This spacer gives
-          the document room to scroll the active line up to mid-screen. */}
+      {/* Scroll runway inside .reading-scroll: the active line is always the
+          LAST rendered line (the list is filtered to index <=
+          currentChunkIndex), so without space beneath it scrollIntoView
+          ({block:'center'}) has nothing to scroll into. This lets the active
+          line reach the middle of the visible scroll area on every chunk. */}
       <div className="reading-runway" aria-hidden="true" />
+      </div>
 
       <KeyboardHint />
     </main>

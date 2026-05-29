@@ -555,11 +555,35 @@ button.ghost {
 
 /* ===== Reading view ===== */
 
-/* Sticky group: keeps the passage title + controls visible at the top of the
-   viewport as the user scrolls through a long passage. */
+/* The reading view fills the dynamic viewport (100dvh) and scrolls its content
+   internally instead of scrolling the page. This is deliberate: page scroll +
+   scrollIntoView centers the active line against the *layout* viewport, which
+   on mobile is taller than the visible area by the height of the browser's
+   dynamic toolbar — so a "centered" line's lower (English) half fell off the
+   bottom of the screen. An internal scroller sized to 100dvh makes "center"
+   mean the center of what is actually visible. */
+.reading-container {
+  height: 100vh; /* fallback for engines without dvh */
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding-top: 1rem;
+  padding-bottom: 0;
+  overflow: hidden; /* the page itself never scrolls; .reading-scroll does */
+}
+
+.reading-scroll {
+  flex: 1 1 auto;
+  min-height: 0; /* required so the flex child can shrink and actually scroll */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Passage title + controls: a non-shrinking flex header pinned above the
+   internal scroller. (No longer needs position: sticky — it sits outside the
+   scrolling area.) */
 .reading-sticky-top {
-  position: sticky;
-  top: 0;
+  flex: 0 0 auto;
   background: var(--bg);
   z-index: 10;
   padding-top: 0.25rem;
@@ -1308,17 +1332,11 @@ button.ghost {
   font-style: italic;
 }
 
-/* Scroll runway below the reading list (see ReadingView). The active line is
-   always the last in-flow content, so without empty space beneath it the
-   browser can't scroll it up to center — it stays pinned at the bottom edge
-   where mobile browser chrome and the home-indicator safe area clip the lower
-   (English) half. Half a viewport of slack lets the active line sit mid-screen
-   on every chunk. Sized in vh so it scales across phones and desktops. */
+/* Scroll runway at the bottom of .reading-scroll. The active line is always
+   the last rendered line, so this empty space gives scrollIntoView room to
+   pull it up to the middle of the visible scroll area on every chunk. */
 .reading-runway {
   height: 50vh;
-  /* Belt-and-suspenders for iOS: keep the slack at least as tall as the home
-     indicator so the very last line never lands under it. */
-  min-height: calc(50vh + env(safe-area-inset-bottom));
 }
 
 .kbd-hint {
