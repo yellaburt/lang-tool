@@ -1,5 +1,5 @@
 import type { CSSProperties, FormEvent } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { assertNever, countSignificantWords } from './core';
 import { hasApiKey } from './llm';
 import { getCurrentSession, signOut } from './supabase';
@@ -1431,18 +1431,43 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     };
   }, [currentChunk?.id]);
 
-  // Keep the active row (or the done message at end of passage) in view as
-  // chunks advance, so the reader never has to manually scroll.
+  // Scroll the active row (or the end-of-passage message) into view. `block`
+  // tunes how aggressive that is:
+  //   'nearest' — minimum scroll; a row that's already visible is left alone.
+  //   'center'  — deliberately re-center the row.
+  const scrollActiveIntoView = useCallback(
+    (block: ScrollLogicalPosition) => {
+      const root = sentencesRef.current;
+      if (!root) return;
+      const target = isDone
+        ? root.parentElement?.querySelector('.done')
+        : root.querySelector('.pair-row.current');
+      if (target instanceof HTMLElement) {
+        target.scrollIntoView({ behavior: 'smooth', block });
+      }
+    },
+    [isDone],
+  );
+
+  // Gentle follow while reading. Advancing to a new chunk — or the English
+  // gloss appearing, which grows the row — nudges the row into view ONLY if
+  // part of it is off-screen. 'nearest' (not 'center') means a visible row is
+  // never yanked around: the view stays put so the reader can tap a word, and
+  // nothing scrolls out of reach or reserves empty space prematurely.
   useEffect(() => {
-    const root = sentencesRef.current;
-    if (!root) return;
-    const target = isDone
-      ? root.parentElement?.querySelector('.done')
-      : root.querySelector('.pair-row.current');
-    if (target instanceof HTMLElement) {
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    scrollActiveIntoView('nearest');
+  }, [currentChunkIndex, spanishTtsDone, scrollActiveIntoView]);
+
+  // Deliberate re-orientation. Right after resuming, or after a word-lookup /
+  // grammar panel closes, re-center the active row to put the reader back on
+  // the current line. The guard makes this fire on resume/close — not on
+  // pausing or opening a panel (opening already scrolls the line into place).
+  useEffect(() => {
+    if (isPaused || state.ui.wordLookup !== null || state.ui.grammarPanel !== null) {
+      return;
     }
-  }, [currentChunkIndex, isDone]);
+    scrollActiveIntoView('center');
+  }, [isPaused, state.ui.wordLookup, state.ui.grammarPanel, scrollActiveIntoView]);
 
   // Listening-mode hidden Spanish phase: in listeningMode, the first audio
   // play happens with all text hidden. Once it ends, listeningHiddenSpanishDone
