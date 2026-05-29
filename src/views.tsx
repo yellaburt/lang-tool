@@ -1857,7 +1857,6 @@ export function ReadingView({ state, dispatch }: ViewProps) {
               currentChunkIndex={currentChunkIndex}
               spanishTtsDone={spanishTtsDone}
               activeSide={activeSide}
-              isPaused={isPaused}
               isFading={isFading}
               wordLookup={state.ui.wordLookup}
               grammarPanel={state.ui.grammarPanel}
@@ -1918,6 +1917,29 @@ export function ReadingView({ state, dispatch }: ViewProps) {
       <div className="reading-runway" aria-hidden="true" />
       </div>
 
+      {/* Resume affordance. Fixed to the bottom of the screen (outside the
+          scroller) so it's always fully visible and easy to tap — the reader's
+          instinct is to tap the "Paused" text to continue. Shown only for a
+          deliberate pause: a word-lookup / grammar panel also sets isPaused but
+          has its own bottom sheet, so suppress the badge then (and under the
+          settings modal). */}
+      {isPaused &&
+        state.ui.wordLookup === null &&
+        state.ui.grammarPanel === null &&
+        !settingsOpen && (
+          <button
+            type="button"
+            className="paused-badge"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              dispatch({ kind: 'toggle-pause' });
+            }}
+            title="Resume from where you paused"
+          >
+            Paused — tap to resume
+          </button>
+        )}
+
       <KeyboardHint />
     </main>
   );
@@ -1944,7 +1966,6 @@ interface SentenceItemProps {
   readonly currentChunkIndex: number;
   readonly spanishTtsDone: boolean;
   readonly activeSide: 'tl' | 'en';
-  readonly isPaused: boolean;
   readonly isFading: boolean;
   readonly wordLookup: WordLookupUiState | null;
   readonly grammarPanel: GrammarPanelUiState | null;
@@ -1960,7 +1981,6 @@ function SentenceItem({
   currentChunkIndex,
   spanishTtsDone,
   activeSide,
-  isPaused,
   isFading,
   wordLookup,
   grammarPanel,
@@ -2071,19 +2091,6 @@ function SentenceItem({
       )}
       {grammarInThisSentence && grammarPanel && (
         <GrammarPanel panel={grammarPanel} dispatch={dispatch} />
-      )}
-      {isPaused && (
-        <button
-          type="button"
-          className="paused-badge"
-          onClick={(e) => {
-            e.currentTarget.blur();
-            dispatch({ kind: 'toggle-pause' });
-          }}
-          title="Resume from where you paused"
-        >
-          paused<span className="paused-hint"> — tap or space to resume</span>
-        </button>
       )}
     </li>
   );

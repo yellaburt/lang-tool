@@ -1282,34 +1282,30 @@ button.ghost {
 
 /* ===== Misc ===== */
 
+/* Resume affordance shown while deliberately paused. Fixed to the bottom of
+   the screen (outside the reading scroller) so it's always fully visible and a
+   big, reliable tap target — tapping the "Paused" text resumes, matching the
+   reader's instinct, exactly like the ▶ Resume control. */
 .paused-badge {
-  display: inline-block;
-  margin-top: 0.5rem;
-  padding: 0.25rem 0.75rem;
-  font-size: 0.85rem;
-  font-weight: 500;
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(1.5rem + env(safe-area-inset-bottom));
+  z-index: 60;
+  padding: 0.6rem 1.4rem;
+  font-size: 1rem;
+  font-weight: 600;
   background: #fff3cd;
   border: 1px solid #e6c976;
-  border-radius: 4px;
+  border-radius: 999px;
   color: #7a5a00;
   font-family: inherit;
   cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
 }
 
 .paused-badge:hover {
   background: #ffe9a8;
-}
-
-/* Bigger tap target on touch devices, and hide the "tap or space" hint
-   since there's no keyboard. The button still works on tap. */
-@media (hover: none) and (pointer: coarse), (max-width: 600px) {
-  .paused-badge {
-    padding: 0.5rem 1rem;
-    font-size: 0.95rem;
-  }
-  .paused-badge .paused-hint {
-    display: none;
-  }
 }
 
 .done {
