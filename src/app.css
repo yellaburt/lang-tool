@@ -1308,6 +1308,19 @@ button.ghost {
   font-style: italic;
 }
 
+/* Scroll runway below the reading list (see ReadingView). The active line is
+   always the last in-flow content, so without empty space beneath it the
+   browser can't scroll it up to center — it stays pinned at the bottom edge
+   where mobile browser chrome and the home-indicator safe area clip the lower
+   (English) half. Half a viewport of slack lets the active line sit mid-screen
+   on every chunk. Sized in vh so it scales across phones and desktops. */
+.reading-runway {
+  height: 50vh;
+  /* Belt-and-suspenders for iOS: keep the slack at least as tall as the home
+     indicator so the very last line never lands under it. */
+  min-height: calc(50vh + env(safe-area-inset-bottom));
+}
+
 .kbd-hint {
   position: fixed;
   bottom: 0;

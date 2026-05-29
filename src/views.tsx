@@ -1879,6 +1879,14 @@ export function ReadingView({ state, dispatch }: ViewProps) {
         </div>
       )}
 
+      {/* Scroll runway. The active line is always the LAST rendered line (the
+          list is filtered to index <= currentChunkIndex), so there is nothing
+          below it for scrollIntoView({block:'center'}) to scroll into — it
+          clamps the line to the bottom of the document, where the phone
+          browser's chrome / safe-area clips its lower half. This spacer gives
+          the document room to scroll the active line up to mid-screen. */}
+      <div className="reading-runway" aria-hidden="true" />
+
       <KeyboardHint />
     </main>
   );
