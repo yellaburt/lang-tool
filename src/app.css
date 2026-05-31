@@ -1219,6 +1219,11 @@ button.ghost {
     background: rgba(0, 0, 0, 0.25);
     z-index: 90;
     animation: backdrop-fade 150ms ease-out;
+    /* Dim only — don't intercept taps. Taps pass through to the words (so a
+       new word switches the panel) and to the Resume control (so one tap both
+       dismisses and resumes). Tap-to-dismiss on empty space is handled by the
+       .reading-scroll click handler. */
+    pointer-events: none;
   }
   .word-lookup-panel,
   .grammar-panel {

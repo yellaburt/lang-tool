@@ -1839,7 +1839,27 @@ export function ReadingView({ state, dispatch }: ViewProps) {
           centers against what's visible — not the larger layout viewport
           whose extra height (the mobile browser's dynamic toolbar) used to
           push the line's lower half off the bottom of the screen. */}
-      <div className="reading-scroll">
+      <div
+        className="reading-scroll"
+        onClick={(e) => {
+          // The dimmed area behind an open lookup/grammar sheet is non-blocking
+          // (pointer-events: none), so taps reach words + controls. Tapping
+          // empty space here still dismisses the open panel; taps on a word, the
+          // grammar button, or inside the panel are left to their own handlers
+          // (which switch / act instead of dismissing).
+          if (state.ui.wordLookup === null && state.ui.grammarPanel === null) return;
+          const target = e.target as HTMLElement;
+          if (
+            target.closest(
+              '.word-clickable, .grammar-button, .word-lookup-panel, .grammar-panel',
+            )
+          ) {
+            return;
+          }
+          if (state.ui.wordLookup !== null) dispatch({ kind: 'dismiss-lookup' });
+          if (state.ui.grammarPanel !== null) dispatch({ kind: 'dismiss-grammar' });
+        }}
+      >
       <ol
         className={
           'sentences' +
@@ -2486,11 +2506,7 @@ function WordLookupPanel({
   }, [lookup.kind]);
   return (
     <>
-      <div
-        className="word-lookup-backdrop"
-        onClick={() => dispatch({ kind: 'dismiss-lookup' })}
-        aria-hidden="true"
-      />
+      <div className="word-lookup-backdrop" aria-hidden="true" />
       <div
         ref={panelRef}
         className={`word-lookup-panel kind-${lookup.kind}`}
@@ -2578,11 +2594,7 @@ function GrammarPanel({
   }, [panel.kind]);
   return (
     <>
-      <div
-        className="grammar-backdrop"
-        onClick={() => dispatch({ kind: 'dismiss-grammar' })}
-        aria-hidden="true"
-      />
+      <div className="grammar-backdrop" aria-hidden="true" />
       <div
         ref={panelRef}
         className={`grammar-panel kind-${panel.kind}`}
