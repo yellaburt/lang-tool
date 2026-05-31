@@ -1458,15 +1458,23 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     scrollActiveIntoView('nearest');
   }, [currentChunkIndex, spanishTtsDone, scrollActiveIntoView]);
 
-  // Deliberate re-orientation. Right after resuming, or after a word-lookup /
-  // grammar panel closes, re-center the active row to put the reader back on
-  // the current line. The guard makes this fire on resume/close — not on
-  // pausing or opening a panel (opening already scrolls the line into place).
+  // Deliberate re-orientation: re-center the active row right after the reader
+  // resumes, OR after a word-lookup / grammar panel closes — including a close
+  // while still paused, so the text returns to its reading position and clears
+  // the fixed "Paused" pill instead of staying where the lookup scrolled it.
+  // Refs detect the resume/close transitions so we DON'T re-center on the
+  // opposite events (pausing, or opening a panel — which scrolls itself).
+  const wasPausedRef = useRef(isPaused);
+  const hadPanelOpenRef = useRef(false);
   useEffect(() => {
-    if (isPaused || state.ui.wordLookup !== null || state.ui.grammarPanel !== null) {
-      return;
+    const panelOpen = state.ui.wordLookup !== null || state.ui.grammarPanel !== null;
+    const justResumed = wasPausedRef.current && !isPaused;
+    const justClosedPanel = hadPanelOpenRef.current && !panelOpen;
+    wasPausedRef.current = isPaused;
+    hadPanelOpenRef.current = panelOpen;
+    if (justResumed || justClosedPanel) {
+      scrollActiveIntoView('center');
     }
-    scrollActiveIntoView('center');
   }, [isPaused, state.ui.wordLookup, state.ui.grammarPanel, scrollActiveIntoView]);
 
   // Listening-mode hidden Spanish phase: in listeningMode, the first audio

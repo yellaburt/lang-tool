@@ -861,10 +861,12 @@ button.ghost {
 .sentence {
   padding: 0.85rem 0;
   border-bottom: 1px solid var(--surface-divider);
-  /* Clear the sticky reading-header (title + control bar) when scrollIntoView
-     targets this sentence — without this, the top of the sentence lands behind
-     the sticky bar. */
-  scroll-margin-top: 7rem;
+  /* When a lookup/grammar sheet opens, the sentence is scrolled to block:'start'
+     to sit above the sheet. The reading header is its own (non-scrolling) flex
+     element above the scroller now, so only a small top gap is needed — keeping
+     this small lets the sentence ride as high as possible, maximizing the room
+     above the bottom sheet. */
+  scroll-margin-top: 1rem;
 }
 
 .sentence .tl {
@@ -1235,10 +1237,11 @@ button.ghost {
     border-radius: 12px 12px 0 0;
     border-left: none;
     border-top: 3px solid #5b8def;
-    /* Size to content. Cap just below the viewport so a long definition can't
-       grow past the top of the screen; short ones stay short. */
-    max-height: 85vh;
-    max-height: 85dvh;
+    /* Size to content, but cap at ~60% so there's always room above the sheet
+       for the looked-up line (the open-scroll lifts it to the top). Short
+       definitions stay short; a long one scrolls inside the sheet. */
+    max-height: 60vh;
+    max-height: 60dvh;
     overflow-y: auto;
     padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
     z-index: 100;
