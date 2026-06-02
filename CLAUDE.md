@@ -72,7 +72,12 @@ Controls visible at the top of the reading view:
 - ⏮ Jump to start, ◀ Previous chunk, ↻ Replay, ▶ Next chunk.
 - Settings gear (everything else: pace sliders, voice pickers, themes,
   emphasis style, re-read options, reading-mode picker + light-mode
-  auto-advance delay).
+  auto-advance delay). The settings modal is a **collapsible accordion**:
+  each section (Pace, Voices, Reading mode, Spanish Re-read, Appearance,
+  Account) is a native `<details>` that shows only its heading (with a ›
+  chevron) until tapped — keeps the modal short on phones. The Reading mode
+  heading also shows the current mode inline (e.g. "Reading mode … Light").
+  Sections default collapsed every time the modal opens.
 
 Keyboard shortcuts: Space (pause/resume), ←/→ (back/next), R (replay),
 Home (jump to start).

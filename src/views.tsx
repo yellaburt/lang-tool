@@ -247,8 +247,10 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
           </button>
         </header>
 
-        <section className="modal-section">
-          <h3>Pace</h3>
+        <details className="modal-section">
+          <summary className="section-summary">
+            <h3>Pace</h3>
+          </summary>
           <label className="pace" title="How fast Spanish is read aloud">
             <span className="pace-label">Spanish speech</span>
             <input
@@ -323,10 +325,12 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
               {settings.englishSpeechPaceMultiplier.toFixed(1)}×
             </span>
           </label>
-        </section>
+        </details>
 
-        <section className="modal-section">
-          <h3>Voices</h3>
+        <details className="modal-section">
+          <summary className="section-summary">
+            <h3>Voices</h3>
+          </summary>
           <VoiceIndicator
             voice={activeSpanishVoice}
             spanishVoiceCount={spanishVoices.length}
@@ -353,10 +357,16 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
             Pick contrasting voices so the language switch is unmistakable — e.g. a male
             Spanish voice and a female English voice, or vice versa.
           </p>
-        </section>
+        </details>
 
-        <section className="modal-section">
-          <h3>Reading mode</h3>
+        <details className="modal-section">
+          <summary className="section-summary">
+            <h3>Reading mode</h3>
+            <span className="section-value">
+              {settings.readingMode.charAt(0).toUpperCase() +
+                settings.readingMode.slice(1)}
+            </span>
+          </summary>
           <div className="mode-picker" role="radiogroup" aria-label="Reading mode">
             <label className="mode-option">
               <input
@@ -420,10 +430,12 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
               </select>
             </label>
           )}
-        </section>
+        </details>
 
-        <section className="modal-section">
-          <h3>Spanish Re-read</h3>
+        <details className="modal-section">
+          <summary className="section-summary">
+            <h3>Spanish Re-read</h3>
+          </summary>
           <label className="toggle-row">
             <input
               type="checkbox"
@@ -500,21 +512,25 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
             trains your ear for varied speakers. Slower first reading + faster second is one
             common pattern; reverse it if you prefer.
           </p>
-        </section>
+        </details>
 
-        <section className="modal-section">
-          <h3>Appearance</h3>
+        <details className="modal-section">
+          <summary className="section-summary">
+            <h3>Appearance</h3>
+          </summary>
           <ThemePickers
             theme={settings.theme}
             emphasisStyle={settings.emphasisStyle}
             dispatch={dispatch}
           />
-        </section>
+        </details>
 
-        <section className="modal-section">
-          <h3>Account</h3>
+        <details className="modal-section">
+          <summary className="section-summary">
+            <h3>Account</h3>
+          </summary>
           <AccountSection />
-        </section>
+        </details>
       </div>
     </div>
   );

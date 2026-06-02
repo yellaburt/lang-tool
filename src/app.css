@@ -779,6 +779,57 @@ button.ghost {
   font-weight: 600;
 }
 
+/* Settings sections are collapsible <details>: only the heading row shows until
+   tapped. The chevron rotates from › to ⌄ when the section is open. */
+.section-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  /* generous tap target on mobile without a giant gap between rows */
+  min-height: 44px;
+  box-sizing: border-box;
+}
+
+.section-summary::-webkit-details-marker {
+  display: none;
+}
+
+.section-summary h3 {
+  margin: 0;
+}
+
+.section-summary::after {
+  content: '›';
+  margin-left: auto;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--text-secondary);
+  transition: transform 0.15s ease;
+}
+
+.modal-section[open] > .section-summary::after {
+  transform: rotate(90deg);
+}
+
+/* Current value shown inline on a collapsed heading (e.g. the active reading
+   mode), so the most-changed setting is visible without expanding. */
+.section-value {
+  margin-left: auto;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: capitalize;
+}
+
+/* Thin divider between collapsed sections so the heading list reads cleanly. */
+.modal-section + .modal-section {
+  border-top: 1px solid var(--surface-divider);
+  margin-top: 0;
+}
+
 .voice-select {
   display: grid;
   grid-template-columns: 9em 1fr;
