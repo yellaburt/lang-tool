@@ -20,6 +20,7 @@ import {
   recordChunkExposure,
   recordExposure,
   shouldInterleaveQuestion,
+  splitBookIntoChapters,
   splitLyricsIntoLines,
 } from './core';
 import {
@@ -548,6 +549,62 @@ function makeChapter(
     ...opts,
   };
 }
+
+describe('splitBookIntoChapters', () => {
+  const body =
+    'This is body prose with enough words to be a real section here. ';
+
+  it('splits TWO "N: Title" headers into chapters (Mother Night format)', () => {
+    const text = `17: August Goes to Valhalla\n${body}\n18: The Blue Vase\n${body}`;
+    const out = splitBookIntoChapters(text);
+    expect(out.map((c) => c.title)).toEqual([
+      '17: August Goes to Valhalla',
+      '18: The Blue Vase',
+    ]);
+    // The header line is stripped from the content so it isn't read aloud.
+    expect(out[0]!.content.startsWith('17:')).toBe(false);
+    expect(out[0]!.content).toContain('body prose');
+  });
+
+  it('splits TWO "Chapter N" headers into chapters', () => {
+    const text = `Chapter 1\n${body}\nChapter 2\n${body}`;
+    expect(splitBookIntoChapters(text).map((c) => c.title)).toEqual([
+      'Chapter 1',
+      'Chapter 2',
+    ]);
+  });
+
+  it('splits spelled-out "Chapter One/Two" headers', () => {
+    const text = `Chapter One\n${body}\nChapter Two\n${body}`;
+    expect(splitBookIntoChapters(text).map((c) => c.title)).toEqual([
+      'Chapter One',
+      'Chapter Two',
+    ]);
+  });
+
+  it('splits THREE standalone roman numerals (weak headers)', () => {
+    const text = `I\n${body}\nII\n${body}\nIII\n${body}`;
+    expect(splitBookIntoChapters(text).map((c) => c.title)).toEqual(['I', 'II', 'III']);
+  });
+
+  it('treats TWO bare numbers as too weak — falls back to length parts', () => {
+    const text = `1\n${body}\n2\n${body}`;
+    const out = splitBookIntoChapters(text, { targetWordsPerSection: 5 });
+    expect(out.every((c) => /^Part \d+$/.test(c.title))).toBe(true);
+  });
+
+  it('falls back to "Part N" by length when there are no headers', () => {
+    const out = splitBookIntoChapters(body.repeat(300), { targetWordsPerSection: 500 });
+    expect(out.length).toBeGreaterThan(1);
+    expect(out.every((c) => /^Part \d+$/.test(c.title))).toBe(true);
+  });
+
+  it('does not mistake "2.1 lbs" or "3:45" for a header', () => {
+    const text = `${body}\n2.1 lbs of flour and 3:45 on the clock.\n${body}`;
+    const out = splitBookIntoChapters(text, { targetWordsPerSection: 500 });
+    expect(out.every((c) => /^Part \d+$/.test(c.title))).toBe(true);
+  });
+});
 
 describe('parseChapterNumber', () => {
   it('parses the header shapes the splitter emits', () => {

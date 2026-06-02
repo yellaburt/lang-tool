@@ -170,25 +170,42 @@ function bookWordCount(s: string): number {
 }
 
 // A run of roman-numeral letters. Case-insensitive at the call site. Doesn't
-// validate that the numeral is well-formed (e.g. "iiii") — books aren't strict,
-// and the ≥3-headers threshold guards against the occasional all-roman word.
+// validate that the numeral is well-formed (e.g. "iiii") — books aren't strict.
 const ROMAN = '[ivxlcdm]+';
 
-const CHAPTER_HEADER_PATTERNS: ReadonlyArray<RegExp> = [
+// Headers are tiered by confidence. STRONG patterns are unmistakable chapter
+// markers that almost never occur by accident in prose, so 2 of them is enough
+// to trust a book split (e.g. Mother Night uses "17: August Krapptauer Goes to
+// Valhalla …" — number, colon, title). WEAK patterns (a bare number or roman
+// numeral alone on a line) are easy to hit by accident, so they need ≥3 and are
+// only used when no strong headers are present.
+const STRONG_HEADER_PATTERNS: ReadonlyArray<RegExp> = [
   // "Chapter 12", "Chapter IV: The Return", "Capítulo 3 — El final"
-  new RegExp(`^(chapter|cap[íi]tulo)\\s+(\\d+|${ROMAN})\\b.*$`, 'i'),
-  // Standalone roman numeral on its own line (Vonnegut-style headers).
-  new RegExp(`^${ROMAN}$`, 'i'),
-  // "1. The Beginning" / "1: The Beginning" — number, separator, real text.
-  /^\d+[.:]\s+\S.*$/,
-  // Standalone arabic chapter number.
-  /^\d+$/,
+  new RegExp(`^(chapter|cap[íi]tulo)\\s+(\\d+|${ROMAN})\\b`, 'i'),
+  // Spelled-out chapter numbers: "Chapter One", "Capítulo Dos", …
+  new RegExp(
+    '^(chapter|cap[íi]tulo)\\s+' +
+      '(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|' +
+      'thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|' +
+      'uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\\b',
+    'i',
+  ),
+  // "17: August …" / "1. The Beginning" — number, separator, then a title.
+  // Requires whitespace after the separator, so "2.1 lbs" / "3:45" don't match.
+  /^\d+\s*[.:]\s+\S/,
 ];
 
-function isChapterHeader(line: string): boolean {
+const WEAK_HEADER_PATTERNS: ReadonlyArray<RegExp> = [
+  /^\d+$/, // bare arabic number on its own line
+  new RegExp(`^${ROMAN}$`, 'i'), // bare roman numeral on its own line
+];
+
+function headerKind(line: string): 'strong' | 'weak' | null {
   const t = line.trim();
-  if (t.length === 0) return false;
-  return CHAPTER_HEADER_PATTERNS.some((re) => re.test(t));
+  if (t.length === 0) return null;
+  if (STRONG_HEADER_PATTERNS.some((re) => re.test(t))) return 'strong';
+  if (WEAK_HEADER_PATTERNS.some((re) => re.test(t))) return 'weak';
+  return null;
 }
 
 // Title for the pre-first-header section, from its first non-empty line.
@@ -231,9 +248,10 @@ function splitByLength(text: string, targetWords: number): ChapterSplit[] {
 }
 
 // Split a pasted book into chapter sections. Tries header heuristics first
-// (needs ≥3 matches to trust them); otherwise falls back to length-based
-// sectioning. The header line is used as the chapter title and stripped from
-// the content, so a chapter never opens with "Chapter 1" as readable text.
+// (strong headers trusted at ≥2, weak at ≥3 — see headerKind); otherwise falls
+// back to length-based sectioning. The header line is used as the chapter title
+// and stripped from the content, so a chapter never opens with "Chapter 1" as
+// readable text.
 export function splitBookIntoChapters(
   text: string,
   opts: { targetWordsPerSection?: number } = {},
@@ -241,12 +259,20 @@ export function splitBookIntoChapters(
   const targetWords = opts.targetWordsPerSection ?? 2000;
   const lines = text.split(/\r?\n/);
 
-  const headerIdx: number[] = [];
+  // Prefer strong headers (trusted at ≥2); fall back to weak headers (≥3);
+  // otherwise split by length. Strong and weak are never mixed — a book uses
+  // one style, and mixing would let a stray bare number break a real chapter.
+  const strongIdx: number[] = [];
+  const weakIdx: number[] = [];
   for (let i = 0; i < lines.length; i++) {
-    if (isChapterHeader(lines[i]!)) headerIdx.push(i);
+    const kind = headerKind(lines[i]!);
+    if (kind === 'strong') strongIdx.push(i);
+    else if (kind === 'weak') weakIdx.push(i);
   }
+  const headerIdx =
+    strongIdx.length >= 2 ? strongIdx : weakIdx.length >= 3 ? weakIdx : null;
 
-  if (headerIdx.length < 3) {
+  if (headerIdx === null) {
     return splitByLength(text, targetWords);
   }
 

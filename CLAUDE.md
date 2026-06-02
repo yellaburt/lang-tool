@@ -51,9 +51,13 @@ trying to be Duolingo or a SaaS — three users total, ever.
   - **Start reading** — adds to library, processes, jumps to reading view
     once first batch lands.
   - **Add as book** — shown only for prose pastes over ~5000 words.
-    `splitBookIntoChapters` (`core.ts`) splits the text into chapters (header
-    heuristics: "Chapter/Capítulo N", standalone roman/arabic numbers, "N.
-    Title"; needs ≥3 headers, else falls back to ~2000-word "Part N" sections).
+    `splitBookIntoChapters` (`core.ts`) splits the text into chapters using
+    confidence-tiered header heuristics: STRONG headers ("Chapter/Capítulo N"
+    incl. spelled-out "Chapter One", and "N: Title" / "N. Title") are trusted at
+    ≥2; WEAK headers (a bare number or roman numeral alone on a line) need ≥3 and
+    are only used when no strong headers exist; otherwise it falls back to
+    ~2000-word "Part N" sections. (Mother Night's "17: August…" format is a
+    strong header — the earlier ≥3-for-everything rule mis-sliced short excerpts.)
     A confirm modal shows the chapter count + an editable book title; on confirm,
     each chapter becomes a prose passage in a folder named after the book.
     Chapters process **lazily** — nothing runs until you open a chapter (the
