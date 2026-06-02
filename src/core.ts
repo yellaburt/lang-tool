@@ -275,6 +275,113 @@ export function splitBookIntoChapters(
   return sections.length > 0 ? sections : splitByLength(text, targetWords);
 }
 
+// === Book folders: detection, chapter ordering, read progress ===
+
+function romanToInt(s: string): number {
+  const map: Record<string, number> = {
+    i: 1, v: 5, x: 10, l: 50, c: 100, d: 500, m: 1000,
+  };
+  const r = s.toLowerCase();
+  let total = 0;
+  for (let i = 0; i < r.length; i++) {
+    const cur = map[r[i]!] ?? 0;
+    const next = map[r[i + 1]!] ?? 0;
+    total += cur < next ? -cur : cur;
+  }
+  return total;
+}
+
+// Parse a chapter number from a passage/chapter title, for ordering chapters
+// in a book folder and for next-chapter navigation. Recognizes exactly the
+// header shapes splitBookIntoChapters produces — "Chapter 12" / "Capítulo IV"
+// (arabic or roman), "Part 3", "1. Title", "1: Title", a standalone arabic
+// number, or a standalone roman numeral. Returns null when the title carries
+// no recognizable number (e.g. a derived leading-section / intro title).
+export function parseChapterNumber(title: string): number | null {
+  const t = title.trim();
+  const chapter = t.match(
+    new RegExp(`^(?:chapter|cap[íi]tulo|part)\\s+(\\d+|${ROMAN})\\b`, 'i'),
+  );
+  if (chapter) {
+    const tok = chapter[1]!;
+    return /^\d+$/.test(tok) ? parseInt(tok, 10) : romanToInt(tok);
+  }
+  const numbered = t.match(/^(\d+)[.:]\s/);
+  if (numbered) return parseInt(numbered[1]!, 10);
+  if (/^\d+$/.test(t)) return parseInt(t, 10);
+  if (new RegExp(`^${ROMAN}$`, 'i').test(t)) return romanToInt(t);
+  return null;
+}
+
+// Order two chapters of a book for display / navigation. Numbered chapters
+// sort by their parsed number; an unnumbered leading section (intro) sorts
+// before the numbered ones; createdAt breaks any remaining tie. This does NOT
+// rely on createdAt for primary ordering — a batch-inserted book stamps every
+// chapter with the same millisecond, so the title number is the real key.
+export function compareChapters(a: Passage, b: Passage): number {
+  const na = parseChapterNumber(a.title);
+  const nb = parseChapterNumber(b.title);
+  if (na !== null && nb !== null) return na - nb || a.createdAt - b.createdAt;
+  if (na !== null) return 1; // a is numbered, b is an intro → b first
+  if (nb !== null) return -1; // a is an intro, b is numbered → a first
+  return a.createdAt - b.createdAt;
+}
+
+// True when a folder reads like a book: enough sequentially-numbered chapters
+// that the flat folder listing would be a wall of rows. Keyed on titles that
+// parseChapterNumber recognizes (the same shapes the book splitter emits), so
+// detection stays consistent with ingestion. The ≥70% threshold tolerates a
+// leading intro section or the odd hand-added passage; the ≥5 floor keeps a
+// couple of "Article 1 / Article 2"-style rows from collapsing into a card.
+export function isBookLikeFolder(passages: ReadonlyArray<Passage>): boolean {
+  if (passages.length < 5) return false;
+  const numbered = passages.filter(
+    (p) => parseChapterNumber(p.title) !== null,
+  ).length;
+  return numbered / passages.length >= 0.7;
+}
+
+// Read progress (0–100) for a passage, in SENTENCES so the denominator is the
+// whole document rather than just the chunks translated so far. A complete,
+// fully-read passage reads 100 even though lastReadChunkIndex runs one past the
+// final chunk. Mirrors the number shown on the library row.
+export function passagePercentRead(passage: Passage): number {
+  const total = passage.sentenceCount;
+  if (total <= 0) return 0;
+  const finished =
+    passage.processingStatus.kind === 'complete' &&
+    passage.lastReadChunkIndex >= passage.chunks.length;
+  if (finished) return 100;
+  let sentencesRead = 0;
+  if (passage.chunks.length > 0) {
+    const idx = Math.min(passage.lastReadChunkIndex, passage.chunks.length - 1);
+    const cur = passage.chunks[idx];
+    sentencesRead = cur ? cur.sentenceIndex : 0;
+  }
+  return Math.round((sentencesRead / total) * 100);
+}
+
+// The chapter that follows `currentPassageId` within its book folder, or null
+// if it's the last (or not in a folder). Siblings are the same folder +
+// subfolder, ordered by compareChapters (parsed chapter number, createdAt as
+// the tiebreaker). Callers gate this on isBookLikeFolder so a generic folder
+// of numbered articles never offers a surprise "next chapter".
+export function findNextChapter(
+  passages: ReadonlyArray<Passage>,
+  currentPassageId: PassageId,
+): Passage | null {
+  const current = passages.find((p) => p.id === currentPassageId);
+  if (!current || current.folder === null) return null;
+  const siblings = passages
+    .filter(
+      (p) => p.folder === current.folder && p.subfolder === current.subfolder,
+    )
+    .sort(compareChapters);
+  const idx = siblings.findIndex((p) => p.id === currentPassageId);
+  if (idx < 0 || idx + 1 >= siblings.length) return null;
+  return siblings[idx + 1]!;
+}
+
 // Count "significant new words" in a Spanish chunk relative to its English
 // gloss. Used to decide whether re-read should fire on short chunks. Rules:
 //   - Letter-word that ALSO appears in the English gloss (case-insensitive):

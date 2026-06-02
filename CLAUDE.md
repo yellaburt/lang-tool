@@ -25,6 +25,17 @@ trying to be Duolingo or a SaaS — three users total, ever.
 
 ### Library
 - A two-level tree: top-level passages, then folders, then sub-folders.
+- A folder that reads like a book (`isBookLikeFolder` in `core.ts`: ≥5
+  passages, ≥70% with a parseable chapter number) collapses into a single
+  compact **book card** (📖 + "Chapter X of N · M% complete") instead of a
+  wall of rows. Tapping it expands a chapter list ordered by chapter number
+  (`compareChapters`); each compact chapter row opens on tap, and a ⋯ kebab
+  reveals the normal rename/move/delete passage controls. Folder rename/remove
+  live on the expanded header. Non-book folders render the old way.
+- Finishing a chapter inside a book-like folder shows a **"Continue to
+  <next-chapter> →"** button (above Back to library) in the reading view's
+  end-of-passage block; it opens the next chapter via `findNextChapter`
+  (`core.ts`). Only book-like folders get this — generic numbered folders don't.
 - Each row shows the passage title, how far you've read (%), and the last
   date opened.
 - Each row has buttons: open (the row itself), **✎** rename, **📁** move,

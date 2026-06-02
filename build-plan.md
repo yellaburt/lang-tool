@@ -589,6 +589,17 @@ chapter lazily when first opened.
 
 ## Task 7: Folder-as-book rendering
 
+**Status:** Completed. `isBookLikeFolder` / `parseChapterNumber` /
+`compareChapters` / `passagePercentRead` live in `core.ts`; `LibraryView`
+routes book-like folders (no sub-folders) to a new `BookFolderGroup` that
+shows a compact book card (📖 + "Chapter X of N · M% complete") and expands
+to a `ChapterRow` list ordered by parsed chapter number. The expanded header
+reuses `FolderHeader` for folder rename/remove; each `ChapterRow`'s ⋯ kebab
+swaps in the full `PassageRow` for rename/move/delete (no duplicated actions).
+Detection is keyed on `parseChapterNumber` (not the spec's two literal regexes)
+so bare-number books like Mother Night are caught. Covered by tests in
+`core.test.ts`.
+
 **Goal:** When a folder contains many sequentially-numbered passages, render
 it compactly so the library doesn't become a 40-row wall.
 
@@ -639,6 +650,14 @@ it compactly so the library doesn't become a 40-row wall.
 ---
 
 ## Task 8: Next-chapter navigation
+
+**Status:** Completed. `findNextChapter(passages, currentPassageId)` in `core.ts`
+returns the next sibling chapter (same folder + subfolder, ordered by
+`compareChapters`), null on the last chapter or a folderless passage. `ReadingView`
+computes `nextChapter` (gated on `isBookLikeFolder`) and, on `isDone`, renders a
+"Continue to <title> →" button above "Back to library"; tapping it reuses the
+existing `open-passage` action (which resets the phase flags and opens the chapter
+at its saved position — chunk 0 for a never-read chapter). Tested in `core.test.ts`.
 
 **Goal:** When you finish reading a passage in a book-like folder, show a
 "Continue to next chapter →" button.

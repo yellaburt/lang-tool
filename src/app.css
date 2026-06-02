@@ -428,6 +428,88 @@ h2 {
   margin-left: 0.75rem;
 }
 
+/* ===== Book folders (compact card + chapter list) ===== */
+
+.book-group {
+  margin: 0.5rem 0 0.75rem;
+}
+
+.book-card {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.75rem 0.6rem;
+  background: var(--surface-soft);
+  border: 1px solid var(--surface-divider);
+  border-radius: 8px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.book-card:hover {
+  background: var(--surface-border);
+}
+
+.book-card-icon {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.book-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.book-card-title {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.book-card-meta {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+/* Compact chapter rows: tighter than a passage row, no large action buttons. */
+.chapter-row .chapter-open {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+}
+
+.chapter-row .passage-title {
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chapter-row .passage-meta {
+  flex: none;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.chapter-kebab {
+  align-self: center;
+  padding: 0.3rem 0.55rem;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.chapter-menu-close {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.25rem 0.5rem 0.5rem;
+  border-bottom: 1px solid var(--surface-divider);
+}
+
 /* ===== Move-to inline form ===== */
 
 .passage-move-form {
@@ -1507,6 +1589,20 @@ button.ghost {
 .done {
   margin-top: 2rem;
   text-align: center;
+}
+
+.done-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+/* Primary "continue reading the book" action; sits above Back to library. */
+.next-chapter-btn {
+  font-weight: 600;
+  max-width: 100%;
+  white-space: normal;
 }
 
 .buffering {

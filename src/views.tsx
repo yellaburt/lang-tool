@@ -1,6 +1,14 @@
 import type { CSSProperties, FormEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { assertNever, countSignificantWords, splitBookIntoChapters } from './core';
+import {
+  assertNever,
+  compareChapters,
+  countSignificantWords,
+  findNextChapter,
+  isBookLikeFolder,
+  passagePercentRead,
+  splitBookIntoChapters,
+} from './core';
 import { hasApiKey } from './llm';
 import { getCurrentSession, signOut } from './supabase';
 import {
@@ -759,14 +767,23 @@ export function LibraryView({ state, dispatch }: ViewProps) {
               ))}
             </ul>
           )}
-          {tree.folders.map((f) => (
-            <FolderGroup
-              key={f.name}
-              folder={f}
-              catalog={catalog}
-              dispatch={dispatch}
-            />
-          ))}
+          {tree.folders.map((f) =>
+            f.subfolders.length === 0 && isBookLikeFolder(f.ungrouped) ? (
+              <BookFolderGroup
+                key={f.name}
+                folder={f}
+                catalog={catalog}
+                dispatch={dispatch}
+              />
+            ) : (
+              <FolderGroup
+                key={f.name}
+                folder={f}
+                catalog={catalog}
+                dispatch={dispatch}
+              />
+            ),
+          )}
         </>
       )}
     </main>
@@ -848,6 +865,190 @@ function FolderGroup({
         </div>
       )}
     </section>
+  );
+}
+
+// A folder that reads like a book (isBookLikeFolder). Collapsed, it shows a
+// single compact book card with aggregate progress instead of a wall of
+// chapter rows; tapping it drills into the chapter list. The expanded state
+// reuses FolderHeader (so folder rename/remove still work, reached from the
+// chapter list per the Task 7 spec) and renders compact ChapterRows. Chapters
+// are ordered by parsed chapter number, not lastOpenedAt, so a book always
+// reads top-to-bottom in document order.
+function BookFolderGroup({
+  folder,
+  catalog,
+  dispatch,
+}: {
+  folder: {
+    readonly name: string;
+    readonly ungrouped: ReadonlyArray<Passage>;
+    readonly subfolders: ReadonlyArray<{
+      readonly name: string;
+      readonly passages: ReadonlyArray<Passage>;
+    }>;
+  };
+  catalog: FolderCatalog;
+  dispatch: (a: AppAction) => void;
+}) {
+  // Start as a card; expand to the chapter list on tap.
+  const [collapsed, setCollapsed] = useState(true);
+  const chapters = useMemo(
+    () => [...folder.ungrouped].sort(compareChapters),
+    [folder.ungrouped],
+  );
+  const n = chapters.length;
+  const avgPercent =
+    n > 0
+      ? Math.round(
+          chapters.reduce((sum, p) => sum + passagePercentRead(p), 0) / n,
+        )
+      : 0;
+  // "Last opened chapter" = the most recently opened one; its position in the
+  // ordered list is the chapter the reader is on. Falls back to 1 for a freshly
+  // ingested book where every chapter shares the same lastOpenedAt.
+  const lastOpened = chapters.reduce(
+    (latest, p) => (p.lastOpenedAt > latest.lastOpenedAt ? p : latest),
+    chapters[0]!,
+  );
+  const currentChapter = chapters.indexOf(lastOpened) + 1;
+
+  if (collapsed) {
+    return (
+      <section className="folder-group book-group">
+        <button
+          type="button"
+          className="book-card"
+          onClick={(e) => {
+            e.currentTarget.blur();
+            setCollapsed(false);
+          }}
+          aria-label={`Open book ${folder.name}`}
+        >
+          <span className="book-card-icon" aria-hidden="true">
+            📖
+          </span>
+          <span className="book-card-body">
+            <span className="book-card-title">{folder.name}</span>
+            <span className="book-card-meta">
+              Chapter {currentChapter} of {n} · {avgPercent}% complete
+            </span>
+          </span>
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="folder-group book-group">
+      <FolderHeader
+        kind="folder"
+        name={folder.name}
+        count={n}
+        collapsed={false}
+        onToggle={() => setCollapsed(true)}
+        onRename={(newName) =>
+          dispatch({
+            kind: 'rename-folder',
+            scope: 'folder',
+            oldName: folder.name,
+            newName,
+          })
+        }
+        onDelete={() => {
+          const ok = window.confirm(
+            `Remove book "${folder.name}"? Its ${n} chapter${n === 1 ? '' : 's'} will move to the top level.`,
+          );
+          if (ok) {
+            dispatch({
+              kind: 'delete-folder',
+              scope: 'folder',
+              name: folder.name,
+            });
+          }
+        }}
+      />
+      <div className="folder-body">
+        <ul className="passage-list chapter-list">
+          {chapters.map((p) => (
+            <ChapterRow
+              key={p.id}
+              passage={p}
+              catalog={catalog}
+              dispatch={dispatch}
+            />
+          ))}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
+// One compact chapter row inside an expanded book. Tapping the row opens the
+// chapter. The ⋯ kebab swaps the compact row for the full PassageRow, exposing
+// the existing rename / move / delete actions without duplicating them.
+function ChapterRow({
+  passage,
+  catalog,
+  dispatch,
+}: {
+  passage: Passage;
+  catalog: FolderCatalog;
+  dispatch: (a: AppAction) => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  if (menuOpen) {
+    return (
+      <>
+        <PassageRow passage={passage} catalog={catalog} dispatch={dispatch} />
+        <li className="chapter-menu-close">
+          <button
+            type="button"
+            className="ghost"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              setMenuOpen(false);
+            }}
+          >
+            Done
+          </button>
+        </li>
+      </>
+    );
+  }
+  const percent = passagePercentRead(passage);
+  const date = new Date(passage.lastOpenedAt).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  });
+  return (
+    <li className="passage-row chapter-row">
+      <button
+        type="button"
+        className="passage-open chapter-open"
+        onClick={(e) => {
+          e.currentTarget.blur();
+          dispatch({ kind: 'open-passage', passageId: passage.id, now: Date.now() });
+        }}
+      >
+        <span className="passage-title">{passage.title}</span>
+        <span className="passage-meta">
+          {percent}% · {date}
+        </span>
+      </button>
+      <button
+        type="button"
+        className="ghost chapter-kebab"
+        onClick={(e) => {
+          e.currentTarget.blur();
+          setMenuOpen(true);
+        }}
+        aria-label={`Actions for ${passage.title}`}
+        title="Rename, move, or delete"
+      >
+        ⋯
+      </button>
+    </li>
   );
 }
 
@@ -1091,22 +1292,8 @@ function PassageRow({
   }
 
   // Progress is measured in SENTENCES so the denominator is the full document
-  // (passage.sentenceCount) rather than just the chunks that have been
-  // translated so far.
-  const totalSentences = passage.sentenceCount;
-  const isFinished =
-    passage.processingStatus.kind === 'complete' &&
-    passage.lastReadChunkIndex >= passage.chunks.length;
-  let sentencesRead = 0;
-  if (isFinished) {
-    sentencesRead = totalSentences;
-  } else if (passage.chunks.length > 0) {
-    const idx = Math.min(passage.lastReadChunkIndex, passage.chunks.length - 1);
-    const cur = passage.chunks[idx];
-    sentencesRead = cur ? cur.sentenceIndex : 0;
-  }
-  const percent =
-    totalSentences > 0 ? Math.round((sentencesRead / totalSentences) * 100) : 0;
+  // rather than just the chunks translated so far (see passagePercentRead).
+  const percent = passagePercentRead(passage);
   const date = new Date(passage.lastOpenedAt).toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
@@ -1554,6 +1741,20 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   const passageStatus = passage?.processingStatus.kind ?? 'complete';
   const isDone = reachedEndOfProcessed && passageStatus === 'complete';
   const isBuffering = reachedEndOfProcessed && passageStatus === 'in-progress';
+
+  // In a book-like folder, finishing a chapter offers a jump straight to the
+  // next one. Gated on isBookLikeFolder so a generic folder of numbered
+  // articles never auto-advances (findNextChapter alone would happily chain
+  // "Article 1" → "Article 2"). null outside books and on the last chapter.
+  const allPassages = state.learner.passages;
+  const nextChapter = useMemo(() => {
+    if (passage?.folder == null || currentPassageId === null) return null;
+    const siblings = Object.values(allPassages).filter(
+      (p) => p.folder === passage.folder && p.subfolder === passage.subfolder,
+    );
+    if (!isBookLikeFolder(siblings)) return null;
+    return findNextChapter(siblings, currentPassageId);
+  }, [allPassages, passage?.folder, passage?.subfolder, currentPassageId]);
   const passageError =
     passage?.processingStatus.kind === 'error' ? passage.processingStatus.message : null;
 
@@ -2172,16 +2373,35 @@ export function ReadingView({ state, dispatch }: ViewProps) {
 
       {isDone && (
         <div className="done">
-          <p>Done with this passage.</p>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.currentTarget.blur();
-              dispatch({ kind: 'go-to-library' });
-            }}
-          >
-            Back to library
-          </button>
+          <p>{nextChapter ? 'Done with this chapter.' : 'Done with this passage.'}</p>
+          <div className="done-actions">
+            {nextChapter && (
+              <button
+                type="button"
+                className="next-chapter-btn"
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  dispatch({
+                    kind: 'open-passage',
+                    passageId: nextChapter.id,
+                    now: Date.now(),
+                  });
+                }}
+              >
+                Continue to {nextChapter.title} →
+              </button>
+            )}
+            <button
+              type="button"
+              className="ghost"
+              onClick={(e) => {
+                e.currentTarget.blur();
+                dispatch({ kind: 'go-to-library' });
+              }}
+            >
+              Back to library
+            </button>
+          </div>
         </div>
       )}
 

@@ -4,14 +4,19 @@ import {
   addVocabItem,
   applyReviewEvent,
   chunkPassage,
+  compareChapters,
   defaultSettings,
   dueVocabItemIds,
   emptyLearnerState,
+  findNextChapter,
   gradeQuestion,
   initialSrsState,
+  isBookLikeFolder,
   IdGen,
   makeClozeQuestion,
   nextSrsState,
+  parseChapterNumber,
+  passagePercentRead,
   recordChunkExposure,
   recordExposure,
   shouldInterleaveQuestion,
@@ -516,5 +521,161 @@ describe('shouldInterleaveQuestion', () => {
     expect(shouldInterleaveQuestion(s.questionFrequency - 1, s)).toBe(false);
     expect(shouldInterleaveQuestion(s.questionFrequency, s)).toBe(true);
     expect(shouldInterleaveQuestion(s.questionFrequency + 1, s)).toBe(true);
+  });
+});
+
+// --- Book folders (Task 7) ---
+
+function makeChapter(
+  id: string,
+  title: string,
+  opts: Partial<Passage> = {},
+): Passage {
+  return {
+    id: id as PassageId,
+    title,
+    language: 'es',
+    rawText: 'x',
+    chunks: [],
+    createdAt: T0,
+    lastOpenedAt: T0,
+    lastReadChunkIndex: 0,
+    sentenceCount: 1,
+    processingStatus: { kind: 'complete' },
+    chunkingMode: 'prose',
+    folder: 'Book',
+    subfolder: null,
+    ...opts,
+  };
+}
+
+describe('parseChapterNumber', () => {
+  it('parses the header shapes the splitter emits', () => {
+    expect(parseChapterNumber('Chapter 12')).toBe(12);
+    expect(parseChapterNumber('Chapter IV: The Return')).toBe(4);
+    expect(parseChapterNumber('Capítulo 3 — El final')).toBe(3);
+    expect(parseChapterNumber('Part 7')).toBe(7);
+    expect(parseChapterNumber('1. The Beginning')).toBe(1);
+    expect(parseChapterNumber('2: Otra cosa')).toBe(2);
+    expect(parseChapterNumber('5')).toBe(5);
+    expect(parseChapterNumber('xiv')).toBe(14);
+  });
+  it('returns null for titles with no recognizable number', () => {
+    expect(parseChapterNumber('Introduction')).toBeNull();
+    expect(parseChapterNumber('A Quiet Morning')).toBeNull();
+    expect(parseChapterNumber('Article')).toBeNull();
+  });
+});
+
+describe('compareChapters', () => {
+  it('orders by chapter number with intros first', () => {
+    const chapters = [
+      makeChapter('c', 'Chapter 10'),
+      makeChapter('a', 'Chapter 2'),
+      makeChapter('intro', 'Prologue'),
+      makeChapter('b', 'Chapter 1'),
+    ];
+    const sorted = [...chapters].sort(compareChapters).map((p) => p.title);
+    expect(sorted).toEqual([
+      'Prologue',
+      'Chapter 1',
+      'Chapter 2',
+      'Chapter 10',
+    ]);
+  });
+});
+
+describe('isBookLikeFolder', () => {
+  it('is true for ≥5 mostly-numbered chapters', () => {
+    const book = [
+      makeChapter('i', 'Introduction'), // unnumbered, tolerated
+      makeChapter('1', 'Chapter 1'),
+      makeChapter('2', 'Chapter 2'),
+      makeChapter('3', 'Chapter 3'),
+      makeChapter('4', 'Chapter 4'),
+    ];
+    expect(isBookLikeFolder(book)).toBe(true);
+  });
+  it('detects a book of bare-number chapters (Mother Night style)', () => {
+    const book = ['1', '2', '3', '4', '5', '6'].map((t) => makeChapter(t, t));
+    expect(isBookLikeFolder(book)).toBe(true);
+  });
+  it('is false for too few passages', () => {
+    const few = ['Chapter 1', 'Chapter 2'].map((t) => makeChapter(t, t));
+    expect(isBookLikeFolder(few)).toBe(false);
+  });
+  it('is false for a folder of descriptively-titled articles', () => {
+    const articles = [
+      'Spain raises rates',
+      'A new museum opens',
+      'Local team wins',
+      'Weather turns cold',
+      'Election results in',
+    ].map((t, i) => makeChapter(`a${i}`, t));
+    expect(isBookLikeFolder(articles)).toBe(false);
+  });
+});
+
+describe('findNextChapter', () => {
+  const book = [
+    makeChapter('c1', 'Chapter 1'),
+    makeChapter('c2', 'Chapter 2'),
+    makeChapter('c10', 'Chapter 10'),
+  ];
+  it('returns the next chapter by chapter number, not array order', () => {
+    // c10 is listed before c2 here; sorting must still give 1 → 2 → 10.
+    const shuffled = [book[0]!, book[2]!, book[1]!];
+    expect(findNextChapter(shuffled, 'c1' as PassageId)?.title).toBe(
+      'Chapter 2',
+    );
+    expect(findNextChapter(shuffled, 'c2' as PassageId)?.title).toBe(
+      'Chapter 10',
+    );
+  });
+  it('returns null on the last chapter', () => {
+    expect(findNextChapter(book, 'c10' as PassageId)).toBeNull();
+  });
+  it('stays within the same folder', () => {
+    const mixed = [
+      makeChapter('a1', 'Chapter 1', { folder: 'Book A' }),
+      makeChapter('a2', 'Chapter 2', { folder: 'Book A' }),
+      makeChapter('b1', 'Chapter 1', { folder: 'Book B' }),
+    ];
+    expect(findNextChapter(mixed, 'a1' as PassageId)?.id).toBe('a2');
+    // a2 is last in Book A even though Book B has more chapters.
+    expect(findNextChapter(mixed, 'a2' as PassageId)).toBeNull();
+  });
+  it('returns null for a top-level (folderless) passage', () => {
+    const loose = [makeChapter('x', 'Chapter 1', { folder: null })];
+    expect(findNextChapter(loose, 'x' as PassageId)).toBeNull();
+  });
+});
+
+describe('passagePercentRead', () => {
+  it('is 100 for a complete, fully-read passage', () => {
+    const p = makeChapter('p', 'Chapter 1', {
+      sentenceCount: 4,
+      chunks: [{ sentenceIndex: 0 } as Chunk, { sentenceIndex: 2 } as Chunk],
+      lastReadChunkIndex: 2, // one past the last chunk
+      processingStatus: { kind: 'complete' },
+    });
+    expect(passagePercentRead(p)).toBe(100);
+  });
+  it('reflects partial progress by sentence position', () => {
+    const p = makeChapter('p', 'Chapter 1', {
+      sentenceCount: 10,
+      chunks: [{ sentenceIndex: 0 } as Chunk, { sentenceIndex: 5 } as Chunk],
+      lastReadChunkIndex: 1,
+      processingStatus: { kind: 'in-progress', processedSentenceCount: 6 },
+    });
+    expect(passagePercentRead(p)).toBe(50);
+  });
+  it('is 0 before any chunks land', () => {
+    const p = makeChapter('p', 'Chapter 1', {
+      sentenceCount: 8,
+      chunks: [],
+      processingStatus: { kind: 'in-progress', processedSentenceCount: 0 },
+    });
+    expect(passagePercentRead(p)).toBe(0);
   });
 });
