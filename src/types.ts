@@ -176,6 +176,13 @@ export type ThemeName =
 
 export type EmphasisStyle = 'color' | 'bold' | 'both' | 'none';
 
+// The three reading flows. 'scaffolded' (default): Spanish audio → Spanish text
+// → English → optional re-read, all automatic. 'listening': adds a hidden-Spanish
+// audio phase first (over-your-head practice). 'light': Spanish audio plays once
+// with text visible, then PAUSES — the reader taps Continue / Show English / a
+// word, or an auto-advance timer fires. No automatic English, no re-read.
+export type ReadingMode = 'scaffolded' | 'listening' | 'light';
+
 export interface Settings {
   readonly dialect: 'es-MX' | 'es-ES' | 'es-neutral';
   readonly questionFrequency: number;
@@ -195,13 +202,14 @@ export interface Settings {
   // (English-identical words and proper names don't count; each digit of a
   // numeric run counts as a separate word). Set true to always re-read.
   readonly reReadShortChunks: boolean;
-  // Listening practice mode: each chunk runs in 3 phases —
-  //   1. Spanish audio plays with all text hidden (pure listening test)
-  //   2. Spanish text appears + Spanish audio plays again
-  //   3. English text appears + English audio plays (if english TTS on)
-  // Existing re-read still works on top of this if enabled, adding a 4th
-  // phase.
-  readonly listeningMode: boolean;
+  // Which of the three reading flows is active this session. See ReadingMode.
+  // Replaces the former `listeningMode` boolean; legacy settings blobs with
+  // `listeningMode: true` are mapped to 'listening' on load (normalizeSettings).
+  readonly readingMode: ReadingMode;
+  // Light mode only: seconds to wait after a chunk's Spanish audio finishes
+  // before auto-advancing, if the reader doesn't interact. Allowed values
+  // 3 | 5 | 8 | 12 | 0, where 0 means never auto-advance. Default 5.
+  readonly autoAdvanceDelaySec: number;
   readonly theme: ThemeName;
   readonly emphasisStyle: EmphasisStyle;
 }

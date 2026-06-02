@@ -44,14 +44,21 @@ trying to be Duolingo or a SaaS — three users total, ever.
   story, a news article), Claude often uses the real title.
 
 ### Reading mode
-Each chunk runs through a sequence of phases. Defaults: Spanish audio
-plays, Spanish text is visible, English gloss appears, hold for reading
-time, auto-advance.
+One of three reading flows is active per session (`settings.readingMode`,
+picked in Settings → Reading mode; Task 5 will make it per-user default):
+- **Scaffolded** (default): Spanish audio plays, Spanish text visible, English
+  gloss appears, hold for reading time, auto-advance.
+- **Listening**: a "hidden Spanish audio" phase comes first — text hidden, just
+  the audio. Then Spanish text reveals + audio replays. Then English reveals +
+  (optionally) audio. Pure-listening practice.
+- **Light**: Spanish audio plays once with the text visible, then **pauses** on
+  a two-button bar (**Show English** / **Continue**). Tapping a word, the chunk
+  area, or pausing cancels the countdown; otherwise it auto-advances after
+  `autoAdvanceDelaySec` (capped by chunk length so short lyric lines advance
+  faster). No automatic English, no re-read. Keyboard: Space = Continue, E =
+  Show English (while parked).
 
-Optional phases (each user-toggleable):
-- **Listening mode**: a "hidden Spanish audio" phase comes first — text
-  hidden, just the audio. Then Spanish text reveals + audio replays. Then
-  English reveals + (optionally) audio. Pure-listening practice.
+Phases that layer on top (each user-toggleable):
 - **English aloud**: English gloss is also read aloud.
 - **Re-read**: after English, Spanish is read again, optionally in a
   contrasting voice (e.g., opposite-gender) for cross-speaker comprehension.
@@ -64,7 +71,8 @@ Controls visible at the top of the reading view:
   unreliable to use).
 - ⏮ Jump to start, ◀ Previous chunk, ↻ Replay, ▶ Next chunk.
 - Settings gear (everything else: pace sliders, voice pickers, themes,
-  emphasis style, re-read options, listening toggle).
+  emphasis style, re-read options, reading-mode picker + light-mode
+  auto-advance delay).
 
 Keyboard shortcuts: Space (pause/resume), ←/→ (back/next), R (replay),
 Home (jump to start).
@@ -257,6 +265,16 @@ No `folders` table. Each passage has `folder text` and `subfolder text`
 columns (both nullable). A folder "exists" iff some passage references
 it. Renaming a folder = updating every matching passage's column.
 Deleting = clearing the column on every matching passage.
+
+### Settings are a single JSONB blob, versioned in app code
+`user_settings` has ONE `settings jsonb` column holding the whole `Settings`
+object — there are NO per-setting columns. So adding/renaming a setting needs
+**no SQL migration**: add the field to `defaultSettings()` (in `core.ts`) and it
+merges over older stored blobs on load via `fetchSettings`. Legacy/renamed keys
+are remapped in `normalizeSettings()` (`supabase.ts`) — e.g. the old
+`listeningMode` boolean is mapped onto the `readingMode` enum there, and drops
+out of the blob on the next write. Don't write a migration to "add a settings
+column"; it'd be wrong about the schema.
 
 ## Current problems
 

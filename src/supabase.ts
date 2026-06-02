@@ -224,6 +224,25 @@ export async function upsertReadingState(
 
 // === Settings ===
 
+// Upgrade a stored settings blob to the current shape. Settings live as a
+// single JSONB blob (no per-setting columns), so schema evolution happens here
+// in the app layer, not in SQL migrations. Currently: map the legacy
+// `listeningMode` boolean onto `readingMode`, and ensure `autoAdvanceDelaySec`
+// has a value. The cleaned shape persists on the next settings write, at which
+// point the stale `listeningMode` key drops out of the blob.
+function normalizeSettings(raw: unknown): Partial<Settings> {
+  if (typeof raw !== 'object' || raw === null) return {};
+  const r = { ...(raw as Record<string, unknown>) };
+  if (r['readingMode'] === undefined) {
+    r['readingMode'] = r['listeningMode'] === true ? 'listening' : 'scaffolded';
+  }
+  delete r['listeningMode'];
+  if (typeof r['autoAdvanceDelaySec'] !== 'number') {
+    r['autoAdvanceDelaySec'] = 5;
+  }
+  return r as Partial<Settings>;
+}
+
 export async function fetchSettings(): Promise<Settings> {
   const { data, error } = await supabase
     .from('user_settings')
@@ -231,7 +250,7 @@ export async function fetchSettings(): Promise<Settings> {
     .maybeSingle();
   if (error) throw new Error(`fetchSettings: ${error.message}`);
   if (!data) return defaultSettings();
-  return { ...defaultSettings(), ...(data.settings as Partial<Settings>) };
+  return { ...defaultSettings(), ...normalizeSettings(data.settings) };
 }
 
 export async function upsertSettings(userId: string, settings: Settings): Promise<void> {

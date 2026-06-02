@@ -804,6 +804,43 @@ button.ghost {
   margin: 0;
 }
 
+/* Reading-mode picker: a segmented control of three radio options. The native
+   radio dot is hidden; the whole pill highlights when its option is checked. */
+.mode-picker {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.6rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  padding: 0.2rem;
+}
+
+.mode-option {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.4rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.mode-option input[type='radio'] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.mode-option:has(input:checked) {
+  background: var(--button-bg);
+  color: var(--button-fg);
+  font-weight: 600;
+}
+
 /* ===== Voice indicator ===== */
 
 .voice-indicator {
@@ -1321,6 +1358,89 @@ button.ghost {
 
 .paused-badge:hover {
   background: #ffe9a8;
+}
+
+/* Light mode: the two-button "park" bar shown after a chunk's Spanish audio
+   plays. Sticky to the bottom of the screen on mobile (clear of the kbd hint),
+   static (inline below the text) on desktop. */
+.light-action-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 55;
+  background: var(--bg);
+  border-top: 1px solid var(--surface-border);
+  padding: 0.6rem 1rem calc(0.6rem + env(safe-area-inset-bottom));
+  box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.12);
+}
+
+/* Thin countdown bar across the top edge of the action bar. Shrinks 100% → 0%
+   over the auto-advance window; remounting (via React key) restarts it. */
+.light-countdown {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 3px;
+  width: 100%;
+  background: var(--text-secondary);
+  opacity: 0.6;
+  transform-origin: left center;
+  animation: light-countdown-shrink var(--countdown-ms, 5000ms) linear forwards;
+}
+
+@keyframes light-countdown-shrink {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+.light-buttons {
+  display: flex;
+  gap: 0.75rem;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.light-btn {
+  flex: 1;
+  min-height: 48px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.light-btn-primary {
+  background: var(--button-bg);
+  color: var(--button-fg);
+  border: 1px solid var(--button-bg);
+}
+
+.light-btn-secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--surface-border);
+}
+
+/* Desktop: a centered floating bar rather than a full-width dock — the reading
+   column is narrow and a full-bleed bar looks unmoored. */
+@media (min-width: 640px) {
+  .light-action-bar {
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    bottom: 1.25rem;
+    width: min(640px, calc(100% - 2rem));
+    border: 1px solid var(--surface-border);
+    border-radius: 12px;
+    padding: 0.6rem 0.75rem;
+    overflow: hidden;
+  }
 }
 
 .done {

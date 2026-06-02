@@ -38,6 +38,7 @@ import {
   Passage,
   PassageId,
   ProcessingStatus,
+  ReadingMode,
   ReviewEventId,
   Settings,
   ThemeName,
@@ -79,6 +80,13 @@ export interface UiState {
   readonly spanishTtsDone: boolean;
   readonly englishTtsDone: boolean;
   readonly reReadDone: boolean;
+  // Light mode only. englishRevealed: the reader tapped "Show English" for the
+  // current chunk (English is gated behind a deliberate action in light mode).
+  // autoAdvanceCancelled: the auto-advance countdown was killed by a word/grammar
+  // tap or a pause, and must NOT silently restart — the reader has to act
+  // (Continue / Show English) to move on. Both reset on every chunk change.
+  readonly englishRevealed: boolean;
+  readonly autoAdvanceCancelled: boolean;
   readonly isPaused: boolean;
   readonly processingError: string | null;
   readonly settingsOpen: boolean;
@@ -175,7 +183,14 @@ export type AppAction =
   | { readonly kind: 'set-re-read-pace'; readonly multiplier: number }
   | { readonly kind: 'toggle-re-read-alternates' }
   | { readonly kind: 'toggle-re-read-short-chunks' }
-  | { readonly kind: 'toggle-listening-mode' }
+  | { readonly kind: 'set-reading-mode'; readonly mode: ReadingMode }
+  | { readonly kind: 'set-auto-advance-delay'; readonly sec: number }
+  // Light mode: reveal the English for the current chunk (and let the
+  // auto-advance timer run again after any English audio finishes).
+  | { readonly kind: 'reveal-english' }
+  // Light mode: a tap on the chunk area kills the auto-advance countdown
+  // without revealing English or advancing — the reader stays on the chunk.
+  | { readonly kind: 'cancel-auto-advance' }
   | { readonly kind: 'open-passage'; readonly passageId: PassageId; readonly now: number }
   | { readonly kind: 'delete-passage'; readonly passageId: PassageId }
   | { readonly kind: 'rename-passage'; readonly passageId: PassageId; readonly title: string }
@@ -240,6 +255,20 @@ export type AppAction =
     }
   | { readonly kind: 'dismiss-grammar' };
 
+// The per-chunk speech/interaction flags, reset every time the current chunk
+// changes (advance, go-back, jump, replay, open-passage, …). Kept in one place
+// so the set can't drift across the ~10 reset sites.
+function freshPhaseFlags() {
+  return {
+    listeningHiddenSpanishDone: false,
+    spanishTtsDone: false,
+    englishTtsDone: false,
+    reReadDone: false,
+    englishRevealed: false,
+    autoAdvanceCancelled: false,
+  } as const;
+}
+
 // Build an empty UiState; the learner state is supplied by the caller so the
 // same shape works whether we're starting fresh or hydrating from storage.
 function freshUiState(view: View): UiState {
@@ -247,10 +276,7 @@ function freshUiState(view: View): UiState {
     view,
     draftText: '',
     currentPassageId: null,
-    listeningHiddenSpanishDone: false,
-    spanishTtsDone: false,
-    englishTtsDone: false,
-    reReadDone: false,
+    ...freshPhaseFlags(),
     isPaused: false,
     processingError: null,
     settingsOpen: false,
@@ -324,10 +350,7 @@ function reducer(state: AppState, action: AppAction): AppState {
           ...state.ui,
           view: 'processing',
           currentPassageId: action.passage.id,
-          listeningHiddenSpanishDone: false,
-          spanishTtsDone: false,
-          englishTtsDone: false,
-          reReadDone: false,
+          ...freshPhaseFlags(),
           isPaused: false,
           processingError: null,
         },
@@ -346,10 +369,7 @@ function reducer(state: AppState, action: AppAction): AppState {
           view: 'library',
           currentPassageId: action.passage.id,
           draftText: '',
-          listeningHiddenSpanishDone: false,
-          spanishTtsDone: false,
-          englishTtsDone: false,
-          reReadDone: false,
+          ...freshPhaseFlags(),
           isPaused: false,
           processingError: null,
         },
@@ -580,10 +600,11 @@ function reducer(state: AppState, action: AppAction): AppState {
         ...next,
         ui: {
           ...next.ui,
-          listeningHiddenSpanishDone: false,
-          spanishTtsDone: false,
-          englishTtsDone: false,
-          reReadDone: false,
+          ...freshPhaseFlags(),
+          // Navigating to a new chunk resumes playback (matching jump-to-start).
+          // In light mode this is what lets Continue clear a pause left behind by
+          // a dismissed word lookup, so the next chunk's Spanish actually plays.
+          isPaused: false,
         },
       };
     }
@@ -598,10 +619,8 @@ function reducer(state: AppState, action: AppAction): AppState {
         ...next,
         ui: {
           ...next.ui,
-          listeningHiddenSpanishDone: false,
-          spanishTtsDone: false,
-          englishTtsDone: false,
-          reReadDone: false,
+          ...freshPhaseFlags(),
+          isPaused: false,
         },
       };
     }
@@ -616,10 +635,7 @@ function reducer(state: AppState, action: AppAction): AppState {
         ...next,
         ui: {
           ...next.ui,
-          listeningHiddenSpanishDone: false,
-          spanishTtsDone: false,
-          englishTtsDone: false,
-          reReadDone: false,
+          ...freshPhaseFlags(),
           isPaused: false,
         },
       };
@@ -630,10 +646,7 @@ function reducer(state: AppState, action: AppAction): AppState {
         ...state,
         ui: {
           ...state.ui,
-          listeningHiddenSpanishDone: false,
-          spanishTtsDone: false,
-          englishTtsDone: false,
-          reReadDone: false,
+          ...freshPhaseFlags(),
         },
       };
 
@@ -651,6 +664,9 @@ function reducer(state: AppState, action: AppAction): AppState {
         ui: {
           ...state.ui,
           isPaused: willBePaused,
+          // Light mode: a deliberate pause also kills the auto-advance
+          // countdown so it doesn't fire out from under a paused reader.
+          autoAdvanceCancelled: willBePaused ? true : state.ui.autoAdvanceCancelled,
           wordLookup: willBePaused ? state.ui.wordLookup : null,
           grammarPanel: willBePaused ? state.ui.grammarPanel : null,
         },
@@ -713,13 +729,37 @@ function reducer(state: AppState, action: AppAction): AppState {
         }),
       };
 
-    case 'toggle-listening-mode':
+    case 'set-reading-mode':
       return {
         ...state,
-        learner: updateSettings(state.learner, {
-          listeningMode: !state.learner.settings.listeningMode,
-        }),
+        learner: updateSettings(state.learner, { readingMode: action.mode }),
       };
+
+    case 'set-auto-advance-delay':
+      return {
+        ...state,
+        learner: updateSettings(state.learner, { autoAdvanceDelaySec: action.sec }),
+      };
+
+    case 'reveal-english':
+      // Light mode: the reader asked to see the English. Clear the cancelled
+      // latch so the auto-advance countdown can resume once any English audio
+      // finishes (or immediately, if English-aloud is off). Also clear isPaused
+      // so any English audio actually plays — a prior word lookup may have left
+      // the chunk paused.
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          englishRevealed: true,
+          autoAdvanceCancelled: false,
+          isPaused: false,
+        },
+      };
+
+    case 'cancel-auto-advance':
+      if (state.ui.autoAdvanceCancelled) return state;
+      return { ...state, ui: { ...state.ui, autoAdvanceCancelled: true } };
 
     case 'toggle-re-read-alternates':
       return {
@@ -743,10 +783,7 @@ function reducer(state: AppState, action: AppAction): AppState {
           ...state.ui,
           view: 'reading',
           currentPassageId: action.passageId,
-          listeningHiddenSpanishDone: false,
-          spanishTtsDone: false,
-          englishTtsDone: false,
-          reReadDone: false,
+          ...freshPhaseFlags(),
           isPaused: false,
           processingError: null,
         },
@@ -852,10 +889,7 @@ function reducer(state: AppState, action: AppAction): AppState {
           ? {
               ...state.ui,
               currentPassageId: null,
-              listeningHiddenSpanishDone: false,
-          spanishTtsDone: false,
-              englishTtsDone: false,
-              reReadDone: false,
+              ...freshPhaseFlags(),
               isPaused: false,
             }
           : state.ui,
@@ -869,10 +903,7 @@ function reducer(state: AppState, action: AppAction): AppState {
           ...state.ui,
           view: 'library',
           currentPassageId: null,
-          listeningHiddenSpanishDone: false,
-          spanishTtsDone: false,
-          englishTtsDone: false,
-          reReadDone: false,
+          ...freshPhaseFlags(),
           isPaused: false,
         },
       };
@@ -915,10 +946,7 @@ function reducer(state: AppState, action: AppAction): AppState {
           view: 'paste',
           draftText: '',
           currentPassageId: null,
-          listeningHiddenSpanishDone: false,
-          spanishTtsDone: false,
-          englishTtsDone: false,
-          reReadDone: false,
+          ...freshPhaseFlags(),
           isPaused: false,
           processingError: null,
         },
@@ -936,6 +964,10 @@ function reducer(state: AppState, action: AppAction): AppState {
         ui: {
           ...state.ui,
           isPaused: true,
+          // Light mode: tapping a word kills the auto-advance countdown; it must
+          // not silently restart when the lookup closes (reader taps Continue /
+          // Show English to move on).
+          autoAdvanceCancelled: true,
           wordLookup: { kind: 'loading', word: action.word, chunkId: action.chunkId },
           grammarPanel: null,
         },
@@ -1003,6 +1035,8 @@ function reducer(state: AppState, action: AppAction): AppState {
         ui: {
           ...state.ui,
           isPaused: true,
+          // Light mode: as with word lookup, kill the auto-advance countdown.
+          autoAdvanceCancelled: true,
           grammarPanel: { kind: 'loading', chunkId: action.chunkId },
           wordLookup: null,
         },

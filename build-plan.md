@@ -347,8 +347,18 @@ the meaning lands but the form's contribution to meaning doesn't.
 
 ## Task 4: Light reading mode
 
+**Status:** Completed.
+
 **Goal:** Add the third reading mode with button-gated English reveal and an
 auto-advance timer.
+
+> **Schema note (corrected during build):** `user_settings` stores the whole
+> `Settings` object as a single JSONB blob — there are NO per-setting columns.
+> So Task 4 added NO SQL migration. The mode change lives entirely in the app
+> layer: `readingMode` / `autoAdvanceDelaySec` were added to `defaultSettings()`
+> (merged over the stored blob on load), and `normalizeSettings()` in
+> `src/supabase.ts` maps the legacy `listeningMode: true` → `'listening'`. The
+> `_reading_mode.sql` file listed below was NOT created. Same applies to Task 5.
 
 **Files:**
 - `src/types.ts` — extend mode type
@@ -368,11 +378,11 @@ auto-advance timer.
    `autoAdvanceDelaySec: number` (allowed: 3 | 5 | 8 | 12 | 0 where 0 means
    never; default 5).
 
-2. **Migration:** Add `reading_mode TEXT NOT NULL DEFAULT 'scaffolded'` and
-   `auto_advance_delay_sec INTEGER NOT NULL DEFAULT 5` to `user_settings`.
-   Backfill: if a previous `listening_mode` boolean column existed, migrate
-   `true → 'listening'`, `false → 'scaffolded'`, then drop the old column in a
-   follow-up migration once both users have logged in fresh.
+2. **Migration:** ~~Add `reading_mode` / `auto_advance_delay_sec` columns…~~
+   **Not applicable** — see the schema note above. Settings are a JSONB blob, so
+   this was done in `defaultSettings()` + `normalizeSettings()` instead, with no
+   SQL migration. Legacy `listeningMode: true` maps to `'listening'` on load;
+   the stale key drops out of the blob on the next settings write.
 
 3. **Reducer actions:** Add (or rename, depending on what exists):
    - `RevealEnglish` — sets a per-chunk flag in state showing English text
@@ -453,8 +463,10 @@ ARD: scaffolded). Both can still toggle per session.
 
 **Changes:**
 
-1. **Migration:** Add `default_reading_mode TEXT NOT NULL DEFAULT 'scaffolded'`
-   to `user_settings`.
+1. **Migration:** ~~Add `default_reading_mode` column…~~ **Not applicable** —
+   settings are a single JSONB blob (see Task 4's schema note). Add
+   `defaultReadingMode` to the `Settings` type + `defaultSettings()`; no SQL
+   migration.
 
 2. On login, after `user_settings` loads, seed the in-memory `readingMode`
    from `defaultReadingMode`. Per-session changes stay in memory; the default
