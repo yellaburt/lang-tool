@@ -184,6 +184,7 @@ export type AppAction =
   | { readonly kind: 'toggle-re-read-alternates' }
   | { readonly kind: 'toggle-re-read-short-chunks' }
   | { readonly kind: 'set-reading-mode'; readonly mode: ReadingMode }
+  | { readonly kind: 'set-default-reading-mode'; readonly mode: ReadingMode }
   | { readonly kind: 'set-auto-advance-delay'; readonly sec: number }
   // Light mode: reveal the English for the current chunk (and let the
   // auto-advance timer run again after any English audio finishes).
@@ -323,8 +324,18 @@ function reducer(state: AppState, action: AppAction): AppState {
   switch (action.kind) {
     case 'library-loaded': {
       const hasPassages = Object.keys(action.learner.passages).length > 0;
+      // A fresh sign-in starts in the user's chosen default mode. Their
+      // per-session mode changes from a prior session (persisted in readingMode)
+      // don't carry over. Seeding here, not in the loader, keeps it pure.
+      const learner: LearnerState = {
+        ...action.learner,
+        settings: {
+          ...action.learner.settings,
+          readingMode: action.learner.settings.defaultReadingMode,
+        },
+      };
       return {
-        learner: action.learner,
+        learner,
         ui: {
           ...state.ui,
           view: hasPassages ? 'library' : 'paste',
@@ -733,6 +744,14 @@ function reducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         learner: updateSettings(state.learner, { readingMode: action.mode }),
+      };
+
+    case 'set-default-reading-mode':
+      // Changes only the sign-in default; the current session's readingMode is
+      // deliberately left as-is.
+      return {
+        ...state,
+        learner: updateSettings(state.learner, { defaultReadingMode: action.mode }),
       };
 
     case 'set-auto-advance-delay':

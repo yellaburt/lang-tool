@@ -451,6 +451,13 @@ auto-advance timer.
 
 ## Task 5: Per-user default reading mode
 
+**Status:** Completed. Seeding lives in the `library-loaded` reducer (sets
+`readingMode = defaultReadingMode` on each fresh load); a "Default on sign-in"
+dropdown in the Reading mode settings section sets `defaultReadingMode` via the
+`set-default-reading-mode` action without touching the live session. No SQL
+migration (JSONB blob). Each account sets its own default via the UI — nothing
+is hardcoded per user.
+
 **Goal:** DPD and ARD have different default modes on sign-in (DPD: light,
 ARD: scaffolded). Both can still toggle per session.
 

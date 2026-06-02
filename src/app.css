@@ -892,6 +892,14 @@ button.ghost {
   font-weight: 600;
 }
 
+/* The "Default on sign-in" picker is a quieter dropdown set off from the
+   session-mode segmented control above it, so the two aren't confused. */
+.default-mode-row {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--surface-divider);
+}
+
 /* ===== Voice indicator ===== */
 
 .voice-indicator {

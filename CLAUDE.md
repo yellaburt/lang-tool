@@ -45,7 +45,10 @@ trying to be Duolingo or a SaaS — three users total, ever.
 
 ### Reading mode
 One of three reading flows is active per session (`settings.readingMode`,
-picked in Settings → Reading mode; Task 5 will make it per-user default):
+picked in Settings → Reading mode). Each fresh sign-in starts in the user's
+`defaultReadingMode` (seeded onto `readingMode` in the `library-loaded`
+reducer; set via the "Default on sign-in" dropdown — DPD and ARD pick their
+own). Per-session changes stay in memory and don't change the default:
 - **Scaffolded** (default): Spanish audio plays, Spanish text visible, English
   gloss appears, hold for reading time, auto-advance.
 - **Listening**: a "hidden Spanish audio" phase comes first — text hidden, just

@@ -3,7 +3,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { assertNever, countSignificantWords } from './core';
 import { hasApiKey } from './llm';
 import { getCurrentSession, signOut } from './supabase';
-import { Chunk, ChunkId, EmphasisStyle, Passage, Settings, ThemeName } from './types';
+import {
+  Chunk,
+  ChunkId,
+  EmphasisStyle,
+  Passage,
+  ReadingMode,
+  Settings,
+  ThemeName,
+} from './types';
 import { buildEmptyPassage } from './app';
 import type {
   AppAction,
@@ -430,6 +438,28 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
               </select>
             </label>
           )}
+          <div className="default-mode-row">
+            <label className="voice-select">
+              <span>Default on sign-in</span>
+              <select
+                value={settings.defaultReadingMode}
+                onChange={(e) =>
+                  dispatch({
+                    kind: 'set-default-reading-mode',
+                    mode: e.target.value as ReadingMode,
+                  })
+                }
+              >
+                <option value="scaffolded">Scaffolded</option>
+                <option value="listening">Listening</option>
+                <option value="light">Light</option>
+              </select>
+            </label>
+            <p className="muted small">
+              The mode each fresh sign-in starts in. Changing it does not affect
+              the current session selected above.
+            </p>
+          </div>
         </details>
 
         <details className="modal-section">

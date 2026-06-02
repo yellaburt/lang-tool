@@ -205,7 +205,12 @@ export interface Settings {
   // Which of the three reading flows is active this session. See ReadingMode.
   // Replaces the former `listeningMode` boolean; legacy settings blobs with
   // `listeningMode: true` are mapped to 'listening' on load (normalizeSettings).
+  // Seeded from `defaultReadingMode` on each fresh sign-in; per-session changes
+  // (the in-reading mode picker) stay in memory and don't change the default.
   readonly readingMode: ReadingMode;
+  // The mode a fresh sign-in starts in, per user (DPD and ARD differ). Persisted;
+  // changing it does NOT change the current session's `readingMode`.
+  readonly defaultReadingMode: ReadingMode;
   // Light mode only: seconds to wait after a chunk's Spanish audio finishes
   // before auto-advancing, if the reader doesn't interact. Allowed values
   // 3 | 5 | 8 | 12 | 0, where 0 means never auto-advance. Default 5.
