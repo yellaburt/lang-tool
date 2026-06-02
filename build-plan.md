@@ -492,10 +492,25 @@ ARD: scaffolded). Both can still toggle per session.
 
 ## Task 6: Book ingestion
 
+**Status:** Completed (with two deliberate divergences, below).
+
+**Divergences from the original spec, decided during build:**
+- **Lazy processing, no background scheduler.** The batch-fetch effect only ever
+  processes the *open* passage, so ~40 in-progress chapters cost nothing until
+  opened. Per Pete's call, chapters process when first opened (Task 8's
+  next-chapter nav opens the next one), so a read-through processes each chapter
+  as reached. Gotcha #1 (concurrency cap / processingPassageId lock) is therefore
+  moot and was NOT implemented. `add-book` sets `currentPassageId: null` so
+  nothing auto-processes.
+- **No auto-scroll to the new folder** (spec §4) — omitted to keep scope tight;
+  the library shows the new folder on return.
+- New passages are now batch-inserted (`insertPassages`) instead of N parallel
+  single-row POSTs; reading-state rows are created on first read, not on insert.
+
 **Goal:** Pasting a long text (Mother Night, a Vonnegut anthology, a
 Project Gutenberg classic) and choosing **Add as book** creates a folder
-named after the book, splits it into chapter passages, and starts background
-processing.
+named after the book, splits it into chapter passages, and processes each
+chapter lazily when first opened.
 
 **Files:**
 - `src/core.ts` — chapter-splitting function

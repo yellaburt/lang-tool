@@ -839,8 +839,10 @@ button.ghost {
   font-size: 0.9rem;
 }
 
-.voice-select select {
+.voice-select select,
+.voice-select input[type='text'] {
   width: 100%;
+  box-sizing: border-box;
 }
 
 .toggle-row {

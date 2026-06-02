@@ -1,4 +1,5 @@
 import {
+  ChapterSplit,
   Chunk,
   ChunkId,
   LearnerState,
@@ -159,6 +160,119 @@ export function splitLyricsIntoLines(rawText: string): ReadonlyArray<LyricsLine>
     pendingBlank = false;
   }
   return out;
+}
+
+// === Book ingestion: chapter splitting ===
+
+function bookWordCount(s: string): number {
+  const t = s.trim();
+  return t.length === 0 ? 0 : t.split(/\s+/).length;
+}
+
+// A run of roman-numeral letters. Case-insensitive at the call site. Doesn't
+// validate that the numeral is well-formed (e.g. "iiii") — books aren't strict,
+// and the ≥3-headers threshold guards against the occasional all-roman word.
+const ROMAN = '[ivxlcdm]+';
+
+const CHAPTER_HEADER_PATTERNS: ReadonlyArray<RegExp> = [
+  // "Chapter 12", "Chapter IV: The Return", "Capítulo 3 — El final"
+  new RegExp(`^(chapter|cap[íi]tulo)\\s+(\\d+|${ROMAN})\\b.*$`, 'i'),
+  // Standalone roman numeral on its own line (Vonnegut-style headers).
+  new RegExp(`^${ROMAN}$`, 'i'),
+  // "1. The Beginning" / "1: The Beginning" — number, separator, real text.
+  /^\d+[.:]\s+\S.*$/,
+  // Standalone arabic chapter number.
+  /^\d+$/,
+];
+
+function isChapterHeader(line: string): boolean {
+  const t = line.trim();
+  if (t.length === 0) return false;
+  return CHAPTER_HEADER_PATTERNS.some((re) => re.test(t));
+}
+
+// Title for the pre-first-header section, from its first non-empty line.
+function leadingSectionTitle(text: string): string {
+  const firstLine =
+    text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => l.length > 0) ?? '';
+  const t = firstLine.slice(0, 50).trim();
+  return t.length > 0 ? t : 'Introduction';
+}
+
+// Length-based fallback when a book has no detectable chapter headers: pack
+// sentences into ~targetWords sections, breaking only on sentence boundaries.
+function splitByLength(text: string, targetWords: number): ChapterSplit[] {
+  const sentences = splitSentences(text);
+  const sections: ChapterSplit[] = [];
+  let buf: string[] = [];
+  let words = 0;
+  const flush = () => {
+    const content = buf.join(' ').trim();
+    if (content.length > 0) {
+      sections.push({ title: `Part ${sections.length + 1}`, content });
+    }
+    buf = [];
+    words = 0;
+  };
+  for (const s of sentences) {
+    buf.push(s);
+    words += bookWordCount(s);
+    if (words >= targetWords) flush();
+  }
+  flush();
+  if (sections.length === 0) {
+    const t = text.trim();
+    return t.length > 0 ? [{ title: 'Part 1', content: t }] : [];
+  }
+  return sections;
+}
+
+// Split a pasted book into chapter sections. Tries header heuristics first
+// (needs ≥3 matches to trust them); otherwise falls back to length-based
+// sectioning. The header line is used as the chapter title and stripped from
+// the content, so a chapter never opens with "Chapter 1" as readable text.
+export function splitBookIntoChapters(
+  text: string,
+  opts: { targetWordsPerSection?: number } = {},
+): ChapterSplit[] {
+  const targetWords = opts.targetWordsPerSection ?? 2000;
+  const lines = text.split(/\r?\n/);
+
+  const headerIdx: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (isChapterHeader(lines[i]!)) headerIdx.push(i);
+  }
+
+  if (headerIdx.length < 3) {
+    return splitByLength(text, targetWords);
+  }
+
+  const sections: ChapterSplit[] = [];
+
+  // Text before the first header: keep as a leading section only if it's
+  // substantial (else it's a title page / front matter and gets dropped).
+  const preText = lines.slice(0, headerIdx[0]).join('\n').trim();
+  if (bookWordCount(preText) >= 30) {
+    sections.push({ title: leadingSectionTitle(preText), content: preText });
+  }
+
+  for (let h = 0; h < headerIdx.length; h++) {
+    const start = headerIdx[h]!;
+    const end = h + 1 < headerIdx.length ? headerIdx[h + 1]! : lines.length;
+    const title = lines[start]!.trim();
+    const content = lines
+      .slice(start + 1, end)
+      .join('\n')
+      .trim();
+    // Drop empty chapters (back-to-back headers, e.g. a table of contents).
+    if (content.length > 0) sections.push({ title, content });
+  }
+
+  // If every header turned out empty (pathological), fall back to length.
+  return sections.length > 0 ? sections : splitByLength(text, targetWords);
 }
 
 // Count "significant new words" in a Spanish chunk relative to its English

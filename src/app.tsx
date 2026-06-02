@@ -20,7 +20,7 @@ import {
   fetchLearnerState,
   fetchPassages,
   getCurrentSession,
-  insertPassage,
+  insertPassages,
   signInWithPassword,
   subscribeAuth,
   updatePassageContent,
@@ -141,6 +141,9 @@ export type AppAction =
   | { readonly kind: 'set-draft'; readonly text: string }
   | { readonly kind: 'start-passage'; readonly passage: Passage }
   | { readonly kind: 'save-passage'; readonly passage: Passage }
+  // Book ingestion: add many chapter passages (all in one folder) at once and
+  // return to the library. Chapters process lazily when first opened.
+  | { readonly kind: 'add-book'; readonly passages: ReadonlyArray<Passage> }
   | {
       readonly kind: 'refresh-passages';
       readonly passages: Readonly<Record<PassageId, Passage>>;
@@ -379,6 +382,29 @@ function reducer(state: AppState, action: AppAction): AppState {
           ...state.ui,
           view: 'library',
           currentPassageId: action.passage.id,
+          draftText: '',
+          ...freshPhaseFlags(),
+          isPaused: false,
+          processingError: null,
+        },
+      };
+    }
+
+    case 'add-book': {
+      // Add all chapter passages and return to the library. currentPassageId is
+      // cleared to null so NOTHING processes in the background — chapters are
+      // processed lazily, only when the user opens one (see the batch-fetch
+      // effect, which only ever processes the open passage).
+      let learner = state.learner;
+      for (const p of action.passages) {
+        learner = addPassage(learner, p);
+      }
+      return {
+        learner,
+        ui: {
+          ...state.ui,
+          view: 'library',
+          currentPassageId: null,
           draftText: '',
           ...freshPhaseFlags(),
           isPaused: false,
@@ -1133,7 +1159,7 @@ const PREFETCH_LEAD_CHUNKS = 3;
  */
 export function buildEmptyPassage(
   rawText: string,
-  options: { chunkingMode?: ChunkingMode } = {},
+  options: { chunkingMode?: ChunkingMode; folder?: string; title?: string } = {},
 ): Passage | null {
   // Prose passages are trimmed; lyrics passages preserve internal blank lines
   // (the stanza-break signal) but still strip leading/trailing whitespace.
@@ -1149,7 +1175,9 @@ export function buildEmptyPassage(
   const now = Date.now();
   return {
     id: ids.newPassageId(),
-    title: deriveTitle(text),
+    // Book chapters pass an explicit title (the detected header / "Part N");
+    // everything else derives a title from the first line.
+    title: options.title ?? deriveTitle(text),
     language: 'es',
     rawText: text,
     chunks: [],
@@ -1159,7 +1187,7 @@ export function buildEmptyPassage(
     sentenceCount,
     processingStatus: { kind: 'in-progress', processedSentenceCount: 0 },
     chunkingMode,
-    folder: null,
+    folder: options.folder ?? null,
     subfolder: null,
   };
 }
@@ -1250,20 +1278,18 @@ export function App() {
       );
     }
 
+    // New passages are batched into a single insert — adding a book creates
+    // dozens at once, and one multi-row insert beats N parallel POSTs. We don't
+    // write a reading_state row for new passages: the passages_with_state view
+    // coalesces a missing row to (0, created_at), and the first actual read
+    // creates it via the lastReadChunkIndex branch below.
+    const newPassages: Passage[] = [];
     for (const id of Object.keys(curr.passages) as PassageId[]) {
       const before = prev.passages[id];
       const after = curr.passages[id];
       if (!after) continue;
       if (!before) {
-        void insertPassage(after, session.userId).catch((e) =>
-          console.error('Passage insert failed', e),
-        );
-        void upsertReadingState(
-          session.userId,
-          after.id,
-          after.lastReadChunkIndex,
-          after.lastOpenedAt,
-        ).catch((e) => console.error('Reading state save failed', e));
+        newPassages.push(after);
         continue;
       }
       if (before === after) continue;
@@ -1296,6 +1322,11 @@ export function App() {
           after.lastOpenedAt,
         ).catch((e) => console.error('Reading state save failed', e));
       }
+    }
+    if (newPassages.length > 0) {
+      void insertPassages(newPassages, session.userId).catch((e) =>
+        console.error('Passage insert failed', e),
+      );
     }
     for (const id of Object.keys(prev.passages) as PassageId[]) {
       if (!(id in curr.passages)) {

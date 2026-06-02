@@ -151,8 +151,8 @@ export async function fetchPassages(): Promise<
   return result;
 }
 
-export async function insertPassage(passage: Passage, ownerId: string): Promise<void> {
-  const { error } = await supabase.from('passages').insert({
+function passageRow(passage: Passage, ownerId: string) {
+  return {
     id: passage.id,
     owner_id: ownerId,
     visibility: 'private',
@@ -166,8 +166,25 @@ export async function insertPassage(passage: Passage, ownerId: string): Promise<
     chunking_mode: passage.chunkingMode,
     folder: passage.folder,
     subfolder: passage.subfolder,
-  });
+  };
+}
+
+export async function insertPassage(passage: Passage, ownerId: string): Promise<void> {
+  const { error } = await supabase.from('passages').insert(passageRow(passage, ownerId));
   if (error) throw new Error(`insertPassage: ${error.message}`);
+}
+
+// Multi-row insert for adding a book's chapters at once — one round-trip
+// instead of N. No-op on an empty array.
+export async function insertPassages(
+  passages: ReadonlyArray<Passage>,
+  ownerId: string,
+): Promise<void> {
+  if (passages.length === 0) return;
+  const { error } = await supabase
+    .from('passages')
+    .insert(passages.map((p) => passageRow(p, ownerId)));
+  if (error) throw new Error(`insertPassages: ${error.message}`);
 }
 
 // Folder/subfolder mutator — kept separate from updatePassageContent so a

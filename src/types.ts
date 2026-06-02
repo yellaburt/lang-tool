@@ -53,6 +53,14 @@ export type ProcessingStatus =
 // lines mark stanza breaks. Set once at creation; not user-editable after.
 export type ChunkingMode = 'prose' | 'lyrics';
 
+// One section produced by splitBookIntoChapters: a chapter title (the detected
+// header line, or a generated "Part N") and the chapter's body text with the
+// header line stripped out. Each becomes its own prose Passage in a book folder.
+export interface ChapterSplit {
+  readonly title: string;
+  readonly content: string;
+}
+
 export interface Passage {
   readonly id: PassageId;
   readonly title: string;

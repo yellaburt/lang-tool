@@ -1,9 +1,10 @@
 import type { CSSProperties, FormEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { assertNever, countSignificantWords } from './core';
+import { assertNever, countSignificantWords, splitBookIntoChapters } from './core';
 import { hasApiKey } from './llm';
 import { getCurrentSession, signOut } from './supabase';
 import {
+  ChapterSplit,
   Chunk,
   ChunkId,
   EmphasisStyle,
@@ -1269,10 +1270,27 @@ function PassageRow({
 
 // === Paste view ===
 
+// Above this many words, a paste is probably a book/long work, so offer to
+// split it into chapters rather than treat it as one giant passage.
+const BOOK_WORD_THRESHOLD = 5000;
+
+function countWords(text: string): number {
+  const t = text.trim();
+  return t.length === 0 ? 0 : t.split(/\s+/).length;
+}
+
 export function PasteView({ state, dispatch }: ViewProps) {
   const [lyricsMode, setLyricsMode] = useState(false);
+  // When set, the "Add as book" confirmation modal is open with these chapters
+  // and an editable book title.
+  const [bookDraft, setBookDraft] = useState<{
+    chapters: ReadonlyArray<ChapterSplit>;
+    title: string;
+  } | null>(null);
   const canStart = state.ui.draftText.trim().length > 0;
   const chunkingMode = lyricsMode ? 'lyrics' : 'prose';
+  // Books are prose only — lyrics chunking doesn't make sense for a long work.
+  const canAddBook = !lyricsMode && countWords(state.ui.draftText) > BOOK_WORD_THRESHOLD;
   function onStart() {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     const passage = buildEmptyPassage(state.ui.draftText, { chunkingMode });
@@ -1284,6 +1302,27 @@ export function PasteView({ state, dispatch }: ViewProps) {
     const passage = buildEmptyPassage(state.ui.draftText, { chunkingMode });
     if (passage === null) return;
     dispatch({ kind: 'save-passage', passage });
+  }
+  function onAddBookClick() {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    const chapters = splitBookIntoChapters(state.ui.draftText);
+    if (chapters.length === 0) return;
+    const firstLine =
+      state.ui.draftText
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .find((l) => l.length > 0) ?? 'Book';
+    setBookDraft({ chapters, title: firstLine.slice(0, 50) });
+  }
+  function onConfirmBook() {
+    if (bookDraft === null) return;
+    const title = bookDraft.title.trim() || 'Book';
+    const passages = bookDraft.chapters
+      .map((ch) => buildEmptyPassage(ch.content, { folder: title, title: ch.title }))
+      .filter((p): p is Passage => p !== null);
+    setBookDraft(null);
+    if (passages.length === 0) return;
+    dispatch({ kind: 'add-book', passages });
   }
   return (
     <main className="container">
@@ -1334,6 +1373,16 @@ export function PasteView({ state, dispatch }: ViewProps) {
         >
           Save
         </button>
+        {canAddBook && (
+          <button
+            type="button"
+            className="ghost"
+            onClick={onAddBookClick}
+            title="Split this long text into chapters and save it as a book"
+          >
+            Add as book
+          </button>
+        )}
         <button
           type="button"
           className="ghost"
@@ -1345,6 +1394,58 @@ export function PasteView({ state, dispatch }: ViewProps) {
           ◀ Library
         </button>
       </div>
+      {bookDraft !== null && (
+        <div className="modal-backdrop" onClick={() => setBookDraft(null)}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Add as book"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="modal-header">
+              <h2>Add as book</h2>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setBookDraft(null)}
+                aria-label="Cancel"
+              >
+                ×
+              </button>
+            </header>
+            <p>
+              Detected <strong>{bookDraft.chapters.length}</strong>{' '}
+              {bookDraft.chapters.length === 1 ? 'chapter' : 'chapters'}. Save as a
+              book?
+            </p>
+            <label className="voice-select">
+              <span>Book title</span>
+              <input
+                type="text"
+                value={bookDraft.title}
+                onChange={(e) =>
+                  setBookDraft((d) => (d === null ? d : { ...d, title: e.target.value }))
+                }
+                spellCheck={false}
+                autoFocus
+              />
+            </label>
+            <div className="actions">
+              <button
+                type="button"
+                disabled={bookDraft.title.trim().length === 0}
+                onClick={onConfirmBook}
+              >
+                Save book
+              </button>
+              <button type="button" className="ghost" onClick={() => setBookDraft(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
