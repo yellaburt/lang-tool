@@ -790,6 +790,21 @@ export function LibraryView({ state, dispatch }: ViewProps) {
   );
 }
 
+// Strong confirmation for the destructive "delete folder + all documents"
+// action. There's no undo and no server-side point-in-time recovery, so spell
+// out exactly what's about to be permanently deleted.
+function confirmDeleteFolderContents(
+  name: string,
+  count: number,
+  noun: 'passage' | 'chapter' = 'passage',
+): boolean {
+  const plural = count === 1 ? noun : `${noun}s`;
+  return window.confirm(
+    `Delete "${name}" and all ${count} ${plural} inside it?\n\n` +
+      `This permanently deletes the document${count === 1 ? '' : 's'} — there is no undo.`,
+  );
+}
+
 function FolderGroup({
   folder,
   catalog,
@@ -833,6 +848,15 @@ function FolderGroup({
           if (ok) {
             dispatch({
               kind: 'delete-folder',
+              scope: 'folder',
+              name: folder.name,
+            });
+          }
+        }}
+        onDeleteAll={() => {
+          if (confirmDeleteFolderContents(folder.name, total)) {
+            dispatch({
+              kind: 'delete-folder-contents',
               scope: 'folder',
               name: folder.name,
             });
@@ -967,6 +991,15 @@ function BookFolderGroup({
             });
           }
         }}
+        onDeleteAll={() => {
+          if (confirmDeleteFolderContents(folder.name, n, 'chapter')) {
+            dispatch({
+              kind: 'delete-folder-contents',
+              scope: 'folder',
+              name: folder.name,
+            });
+          }
+        }}
       />
       <div className="folder-body">
         <ul className="passage-list chapter-list">
@@ -1095,6 +1128,16 @@ function SubfolderGroup({
             });
           }
         }}
+        onDeleteAll={() => {
+          if (confirmDeleteFolderContents(subfolder.name, count)) {
+            dispatch({
+              kind: 'delete-folder-contents',
+              scope: 'subfolder',
+              name: subfolder.name,
+              parentFolder,
+            });
+          }
+        }}
       />
       {!collapsed && (
         <ul className="passage-list">
@@ -1112,9 +1155,11 @@ function SubfolderGroup({
   );
 }
 
-// Shared header for both folder and sub-folder. Three side buttons next to
-// the collapsible header: rename (✎), delete (×). Clicking the name area
-// toggles collapse; the side buttons stop propagation so they don't.
+// Shared header for both folder and sub-folder. Side buttons next to the
+// collapsible header: rename (✎), remove (×, moves passages out), and a
+// destructive delete (🗑, deletes the folder and everything in it). Clicking
+// the name area toggles collapse; the side buttons stop propagation so they
+// don't.
 function FolderHeader({
   kind,
   name,
@@ -1123,6 +1168,7 @@ function FolderHeader({
   onToggle,
   onRename,
   onDelete,
+  onDeleteAll,
 }: {
   kind: 'folder' | 'subfolder';
   name: string;
@@ -1131,6 +1177,7 @@ function FolderHeader({
   onToggle: () => void;
   onRename: (newName: string) => void;
   onDelete: () => void;
+  onDeleteAll: () => void;
 }) {
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(name);
@@ -1230,6 +1277,19 @@ function FolderHeader({
         title="Remove folder (passages move out, no data deleted)"
       >
         ×
+      </button>
+      <button
+        type="button"
+        className="ghost folder-delete-all-btn"
+        onClick={(e) => {
+          e.stopPropagation();
+          e.currentTarget.blur();
+          onDeleteAll();
+        }}
+        aria-label={`Delete ${name} and all its documents`}
+        title="Delete folder AND all its documents (permanent, no undo)"
+      >
+        🗑
       </button>
     </div>
   );

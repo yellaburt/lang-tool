@@ -369,10 +369,19 @@ h2 {
 }
 
 .folder-rename-btn,
-.folder-delete-btn {
+.folder-delete-btn,
+.folder-delete-all-btn {
   padding: 0.3rem 0.55rem;
   font-size: 0.95rem;
   line-height: 1;
+}
+
+.folder-delete-all-btn {
+  opacity: 0.7;
+}
+
+.folder-delete-all-btn:hover {
+  opacity: 1;
 }
 
 .folder-rename-form {

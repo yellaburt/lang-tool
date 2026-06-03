@@ -217,10 +217,20 @@ export type AppAction =
       readonly parentFolder?: string;
     }
   | {
-      // "Delete" a folder = move all its passages out (folder→top-level,
+      // "Remove" a folder = move all its passages out (folder→top-level,
       // subfolder→parent's root). The folders themselves are implicit so
-      // there's nothing else to delete.
+      // there's nothing else to remove. No passage is deleted.
       readonly kind: 'delete-folder';
+      readonly scope: 'folder' | 'subfolder';
+      readonly name: string;
+      readonly parentFolder?: string;
+    }
+  | {
+      // Destructive: delete a folder AND every passage inside it. For 'folder'
+      // scope this includes passages in its sub-folders (they still carry
+      // folder===name). Permanent — there's no undo and Supabase free tier has
+      // no point-in-time recovery, so callers must confirm first.
+      readonly kind: 'delete-folder-contents';
       readonly scope: 'folder' | 'subfolder';
       readonly name: string;
       readonly parentFolder?: string;
@@ -920,6 +930,37 @@ function reducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         learner: { ...state.learner, passages: updated },
+      };
+    }
+
+    case 'delete-folder-contents': {
+      // Drop every passage in the folder (or sub-folder). The persistence
+      // effect notices the removed ids and issues the Supabase deletes, same
+      // path as delete-passage.
+      const kept: Record<PassageId, Passage> = {};
+      let deletedCurrent = false;
+      for (const [id, p] of Object.entries(state.learner.passages)) {
+        const pid = id as PassageId;
+        const matches =
+          action.scope === 'folder'
+            ? p.folder === action.name
+            : p.folder === action.parentFolder && p.subfolder === action.name;
+        if (matches) {
+          if (state.ui.currentPassageId === pid) deletedCurrent = true;
+          continue;
+        }
+        kept[pid] = p;
+      }
+      return {
+        learner: { ...state.learner, passages: kept },
+        ui: deletedCurrent
+          ? {
+              ...state.ui,
+              currentPassageId: null,
+              ...freshPhaseFlags(),
+              isPaused: false,
+            }
+          : state.ui,
       };
     }
 
