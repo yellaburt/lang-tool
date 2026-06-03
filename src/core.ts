@@ -52,7 +52,7 @@ export function defaultSettings(): Settings {
     englishSpeechPaceMultiplier: 1.0,
     reReadEnabled: false,
     reReadVoice: null,
-    reReadPaceMultiplier: 1.0,
+    reReadPaceMultiplier: 1.1,
     reReadAlternates: false,
     reReadShortChunks: false,
     readingMode: 'scaffolded',
