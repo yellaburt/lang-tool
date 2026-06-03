@@ -57,7 +57,6 @@ export function defaultSettings(): Settings {
     reReadShortChunks: false,
     readingMode: 'scaffolded',
     defaultReadingMode: 'scaffolded',
-    autoAdvanceDelaySec: 5,
     theme: 'white',
     emphasisStyle: 'color',
   };

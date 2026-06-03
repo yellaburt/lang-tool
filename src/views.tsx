@@ -425,28 +425,8 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
             {settings.readingMode === 'listening' &&
               'Each chunk plays in phases: (1) Spanish audio with the text hidden — pure listening test; (2) Spanish text appears and audio plays again; (3) English text appears (and plays if English aloud is on).'}
             {settings.readingMode === 'light' &&
-              'Spanish audio plays once with the text visible, then pauses. Tap Show English, tap Continue, or tap a word — or it auto-advances after the delay below.'}
+              'Spanish audio plays once with the text visible, then waits. Tap Show English to see the gloss, then tap Continue (or press Space) to move on. Nothing advances on its own — you always drive.'}
           </p>
-          {settings.readingMode === 'light' && (
-            <label className="voice-select">
-              <span>Auto-advance delay</span>
-              <select
-                value={settings.autoAdvanceDelaySec}
-                onChange={(e) =>
-                  dispatch({
-                    kind: 'set-auto-advance-delay',
-                    sec: Number(e.target.value),
-                  })
-                }
-              >
-                <option value={3}>3 seconds</option>
-                <option value={5}>5 seconds</option>
-                <option value={8}>8 seconds</option>
-                <option value={12}>12 seconds</option>
-                <option value={0}>Never</option>
-              </select>
-            </label>
-          )}
           <div className="default-mode-row">
             <label className="voice-select">
               <span>Default on sign-in</span>
@@ -1737,11 +1717,9 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     englishTtsDone,
     reReadDone,
     englishRevealed,
-    autoAdvanceCancelled,
     isPaused,
   } = state.ui;
   const readingMode = state.learner.settings.readingMode;
-  const autoAdvanceDelaySec = state.learner.settings.autoAdvanceDelaySec;
   // Keep the existing scaffolded/listening effect tree unchanged: 'listening'
   // is the only mode with the hidden-Spanish phase, and in 'light' mode this is
   // false so the Spanish phase plays once with text visible.
@@ -2218,22 +2196,10 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     (!englishTtsEnabled || englishTtsDone) &&
     (!reReadEnabled || reReadDone);
 
-  // Light mode: the chunk's audio is finished once Spanish has played and — if
-  // the reader revealed English with English-aloud on — the English finished.
-  const lightChunkAudioDone =
-    spanishTtsDone && (!englishRevealed || !englishTtsEnabled || englishTtsDone);
   // Light mode: Spanish is done and we're parked, waiting on the reader. The
-  // two-button bar shows and (unless cancelled) the countdown runs.
+  // two-button bar shows; nothing advances until the reader taps Continue (or
+  // Show English). Light mode never auto-advances — the reader always drives.
   const lightAwaitingInput = lightMode && spanishTtsDone && !isPaused;
-  // Light mode auto-advance window, capped so short lyric lines don't sit for
-  // the full prose delay. 0 (=Never) and non-light modes yield 0 (no countdown).
-  const lightCountdownMs =
-    lightMode && autoAdvanceDelaySec > 0 && currentChunk
-      ? Math.min(
-          autoAdvanceDelaySec * 1000,
-          holdMsForChunk(currentChunk, readPaceMultiplier),
-        )
-      : 0;
 
   // Hold timer after speech is done, then advance. With English audio on the
   // user has already heard the meaning, so the hold collapses to a brief
@@ -2248,18 +2214,9 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     if (isPaused) return;
     if (settingsOpen) return;
 
-    // Light mode: a single configurable countdown after the chunk's audio is
-    // done. No fade ramp — the visible countdown bar is the reader's signal.
-    // The countdown won't run (or restart) once cancelled by a tap/pause.
-    if (lightMode) {
-      if (!lightChunkAudioDone) return;
-      if (autoAdvanceCancelled) return;
-      if (lightCountdownMs <= 0) return; // delay = Never
-      const advanceTimer = window.setTimeout(() => {
-        dispatch({ kind: 'advance' });
-      }, lightCountdownMs);
-      return () => window.clearTimeout(advanceTimer);
-    }
+    // Light mode never auto-advances: the reader always drives, tapping
+    // Continue (or Show English first). No timer is ever started here.
+    if (lightMode) return;
 
     if (!allSpeechDoneForCurrentChunk) return;
 
@@ -2288,9 +2245,6 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     currentChunk?.englishGloss,
     allSpeechDoneForCurrentChunk,
     lightMode,
-    lightChunkAudioDone,
-    autoAdvanceCancelled,
-    lightCountdownMs,
     isPaused,
     settingsOpen,
     readPaceMultiplier,
@@ -2384,18 +2338,6 @@ export function ReadingView({ state, dispatch }: ViewProps) {
           const onInteractive = target.closest(
             '.word-clickable, .grammar-button, .word-lookup-panel, .grammar-panel, .light-action-bar',
           );
-          // Light mode, no panel open: a tap on empty chunk area cancels the
-          // auto-advance countdown so the reader can dwell on the chunk.
-          if (
-            lightMode &&
-            state.ui.wordLookup === null &&
-            state.ui.grammarPanel === null
-          ) {
-            if (!onInteractive && !autoAdvanceCancelled) {
-              dispatch({ kind: 'cancel-auto-advance' });
-            }
-            return;
-          }
           if (state.ui.wordLookup === null && state.ui.grammarPanel === null) return;
           if (onInteractive) return;
           if (state.ui.wordLookup !== null) dispatch({ kind: 'dismiss-lookup' });
@@ -2500,8 +2442,8 @@ export function ReadingView({ state, dispatch }: ViewProps) {
       </div>
 
       {/* Light mode: once the chunk's Spanish audio has played, park here with a
-          two-button bar (and a countdown the tap-to-cancel logic can stop). The
-          bar replaces the auto-flow of the other modes — the reader drives. */}
+          two-button bar. Nothing advances on its own — the reader taps Show
+          English to see the gloss, then Continue (or Space) to move on. */}
       {lightMode &&
         spanishTtsDone &&
         !isDone &&
@@ -2509,18 +2451,6 @@ export function ReadingView({ state, dispatch }: ViewProps) {
         state.ui.grammarPanel === null &&
         !settingsOpen && (
           <div className="light-action-bar">
-            {lightCountdownMs > 0 &&
-              !autoAdvanceCancelled &&
-              !isPaused &&
-              lightChunkAudioDone && (
-                <div
-                  className="light-countdown"
-                  key={`${currentChunk?.id ?? 'none'}:${englishRevealed}`}
-                  style={
-                    { '--countdown-ms': `${lightCountdownMs}ms` } as CSSProperties
-                  }
-                />
-              )}
             <div className="light-buttons">
               {!englishRevealed && (
                 <button

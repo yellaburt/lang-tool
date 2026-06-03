@@ -82,11 +82,9 @@ export interface UiState {
   readonly reReadDone: boolean;
   // Light mode only. englishRevealed: the reader tapped "Show English" for the
   // current chunk (English is gated behind a deliberate action in light mode).
-  // autoAdvanceCancelled: the auto-advance countdown was killed by a word/grammar
-  // tap or a pause, and must NOT silently restart — the reader has to act
-  // (Continue / Show English) to move on. Both reset on every chunk change.
+  // Resets on every chunk change. Light mode never auto-advances — the reader
+  // always taps Continue / Show English to move on.
   readonly englishRevealed: boolean;
-  readonly autoAdvanceCancelled: boolean;
   readonly isPaused: boolean;
   readonly processingError: string | null;
   readonly settingsOpen: boolean;
@@ -188,13 +186,9 @@ export type AppAction =
   | { readonly kind: 'toggle-re-read-short-chunks' }
   | { readonly kind: 'set-reading-mode'; readonly mode: ReadingMode }
   | { readonly kind: 'set-default-reading-mode'; readonly mode: ReadingMode }
-  | { readonly kind: 'set-auto-advance-delay'; readonly sec: number }
-  // Light mode: reveal the English for the current chunk (and let the
-  // auto-advance timer run again after any English audio finishes).
+  // Light mode: reveal the English gloss for the current chunk. English is gated
+  // behind this deliberate action; advancing still requires a Continue tap.
   | { readonly kind: 'reveal-english' }
-  // Light mode: a tap on the chunk area kills the auto-advance countdown
-  // without revealing English or advancing — the reader stays on the chunk.
-  | { readonly kind: 'cancel-auto-advance' }
   | { readonly kind: 'open-passage'; readonly passageId: PassageId; readonly now: number }
   | { readonly kind: 'delete-passage'; readonly passageId: PassageId }
   | { readonly kind: 'rename-passage'; readonly passageId: PassageId; readonly title: string }
@@ -279,7 +273,6 @@ function freshPhaseFlags() {
     englishTtsDone: false,
     reReadDone: false,
     englishRevealed: false,
-    autoAdvanceCancelled: false,
   } as const;
 }
 
@@ -711,9 +704,6 @@ function reducer(state: AppState, action: AppAction): AppState {
         ui: {
           ...state.ui,
           isPaused: willBePaused,
-          // Light mode: a deliberate pause also kills the auto-advance
-          // countdown so it doesn't fire out from under a paused reader.
-          autoAdvanceCancelled: willBePaused ? true : state.ui.autoAdvanceCancelled,
           wordLookup: willBePaused ? state.ui.wordLookup : null,
           grammarPanel: willBePaused ? state.ui.grammarPanel : null,
         },
@@ -790,31 +780,18 @@ function reducer(state: AppState, action: AppAction): AppState {
         learner: updateSettings(state.learner, { defaultReadingMode: action.mode }),
       };
 
-    case 'set-auto-advance-delay':
-      return {
-        ...state,
-        learner: updateSettings(state.learner, { autoAdvanceDelaySec: action.sec }),
-      };
-
     case 'reveal-english':
-      // Light mode: the reader asked to see the English. Clear the cancelled
-      // latch so the auto-advance countdown can resume once any English audio
-      // finishes (or immediately, if English-aloud is off). Also clear isPaused
-      // so any English audio actually plays — a prior word lookup may have left
-      // the chunk paused.
+      // Light mode: the reader asked to see the English. Clear isPaused so any
+      // English audio actually plays — a prior word lookup may have left the
+      // chunk paused. The chunk still won't advance until a Continue tap.
       return {
         ...state,
         ui: {
           ...state.ui,
           englishRevealed: true,
-          autoAdvanceCancelled: false,
           isPaused: false,
         },
       };
-
-    case 'cancel-auto-advance':
-      if (state.ui.autoAdvanceCancelled) return state;
-      return { ...state, ui: { ...state.ui, autoAdvanceCancelled: true } };
 
     case 'toggle-re-read-alternates':
       return {
@@ -1050,10 +1027,6 @@ function reducer(state: AppState, action: AppAction): AppState {
         ui: {
           ...state.ui,
           isPaused: true,
-          // Light mode: tapping a word kills the auto-advance countdown; it must
-          // not silently restart when the lookup closes (reader taps Continue /
-          // Show English to move on).
-          autoAdvanceCancelled: true,
           wordLookup: { kind: 'loading', word: action.word, chunkId: action.chunkId },
           grammarPanel: null,
         },
@@ -1121,8 +1094,6 @@ function reducer(state: AppState, action: AppAction): AppState {
         ui: {
           ...state.ui,
           isPaused: true,
-          // Light mode: as with word lookup, kill the auto-advance countdown.
-          autoAdvanceCancelled: true,
           grammarPanel: { kind: 'loading', chunkId: action.chunkId },
           wordLookup: null,
         },

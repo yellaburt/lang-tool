@@ -188,7 +188,7 @@ export type EmphasisStyle = 'color' | 'bold' | 'both' | 'none';
 // → English → optional re-read, all automatic. 'listening': adds a hidden-Spanish
 // audio phase first (over-your-head practice). 'light': Spanish audio plays once
 // with text visible, then PAUSES — the reader taps Continue / Show English / a
-// word, or an auto-advance timer fires. No automatic English, no re-read.
+// word to drive. Never auto-advances. No automatic English, no re-read.
 export type ReadingMode = 'scaffolded' | 'listening' | 'light';
 
 export interface Settings {
@@ -219,10 +219,6 @@ export interface Settings {
   // The mode a fresh sign-in starts in, per user (DPD and ARD differ). Persisted;
   // changing it does NOT change the current session's `readingMode`.
   readonly defaultReadingMode: ReadingMode;
-  // Light mode only: seconds to wait after a chunk's Spanish audio finishes
-  // before auto-advancing, if the reader doesn't interact. Allowed values
-  // 3 | 5 | 8 | 12 | 0, where 0 means never auto-advance. Default 5.
-  readonly autoAdvanceDelaySec: number;
   readonly theme: ThemeName;
   readonly emphasisStyle: EmphasisStyle;
 }

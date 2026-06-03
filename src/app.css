@@ -1513,41 +1513,18 @@ button.ghost {
 }
 
 /* Light mode: the two-button "park" bar shown after a chunk's Spanish audio
-   plays. Sticky to the bottom of the screen on mobile (clear of the kbd hint),
-   static (inline below the text) on desktop. */
+   plays. On mobile it's an in-flow footer of the reading container (the last
+   flex child) rather than a fixed overlay: this keeps it inside the dynamic
+   (100dvh) viewport so it can never sit off the bottom of the screen behind the
+   browser toolbar, and it makes .reading-scroll shrink to sit ABOVE it so the
+   active line / its English gloss is never hidden behind the buttons. Desktop
+   keeps a floating centered pill (see the min-width override below). */
 .light-action-bar {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 55;
+  flex: 0 0 auto;
   background: var(--bg);
   border-top: 1px solid var(--surface-border);
   padding: 0.6rem 1rem calc(0.6rem + env(safe-area-inset-bottom));
   box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.12);
-}
-
-/* Thin countdown bar across the top edge of the action bar. Shrinks 100% → 0%
-   over the auto-advance window; remounting (via React key) restarts it. */
-.light-countdown {
-  position: absolute;
-  top: 0;
-  left: 0;
-  height: 3px;
-  width: 100%;
-  background: var(--text-secondary);
-  opacity: 0.6;
-  transform-origin: left center;
-  animation: light-countdown-shrink var(--countdown-ms, 5000ms) linear forwards;
-}
-
-@keyframes light-countdown-shrink {
-  from {
-    transform: scaleX(1);
-  }
-  to {
-    transform: scaleX(0);
-  }
 }
 
 .light-buttons {
@@ -1583,10 +1560,12 @@ button.ghost {
    column is narrow and a full-bleed bar looks unmoored. */
 @media (min-width: 640px) {
   .light-action-bar {
+    position: fixed;
     left: 50%;
     right: auto;
     transform: translateX(-50%);
     bottom: 1.25rem;
+    z-index: 55;
     width: min(640px, calc(100% - 2rem));
     border: 1px solid var(--surface-border);
     border-radius: 12px;

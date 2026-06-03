@@ -80,11 +80,12 @@ own). Per-session changes stay in memory and don't change the default:
   the audio. Then Spanish text reveals + audio replays. Then English reveals +
   (optionally) audio. Pure-listening practice.
 - **Light**: Spanish audio plays once with the text visible, then **pauses** on
-  a two-button bar (**Show English** / **Continue**). Tapping a word, the chunk
-  area, or pausing cancels the countdown; otherwise it auto-advances after
-  `autoAdvanceDelaySec` (capped by chunk length so short lyric lines advance
-  faster). No automatic English, no re-read. Keyboard: Space = Continue, E =
-  Show English (while parked).
+  a two-button bar (**Show English** / **Continue**). It **never auto-advances** —
+  the reader always taps Continue (or Show English first). Pressing Show English
+  reveals the gloss and still waits for a manual Continue. No automatic English,
+  no re-read. Keyboard: Space = Continue, E = Show English (while parked). The
+  park bar is an in-flow footer of the reading container on mobile (not a fixed
+  overlay) so it stays inside the dvh viewport and the scroll area sits above it.
 
 Phases that layer on top (each user-toggleable):
 - **English aloud**: English gloss is also read aloud.
@@ -99,8 +100,8 @@ Controls visible at the top of the reading view:
   unreliable to use).
 - ⏮ Jump to start, ◀ Previous chunk, ↻ Replay, ▶ Next chunk.
 - Settings gear (everything else: pace sliders, voice pickers, themes,
-  emphasis style, re-read options, reading-mode picker + light-mode
-  auto-advance delay). The settings modal is a **collapsible accordion**:
+  emphasis style, re-read options, reading-mode picker). The settings modal is
+  a **collapsible accordion**:
   each section (Pace, Voices, Reading mode, Spanish Re-read, Appearance,
   Account) is a native `<details>` that shows only its heading (with a ›
   chevron) until tapped — keeps the modal short on phones. The Reading mode

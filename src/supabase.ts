@@ -244,9 +244,9 @@ export async function upsertReadingState(
 // Upgrade a stored settings blob to the current shape. Settings live as a
 // single JSONB blob (no per-setting columns), so schema evolution happens here
 // in the app layer, not in SQL migrations. Currently: map the legacy
-// `listeningMode` boolean onto `readingMode`, and ensure `autoAdvanceDelaySec`
-// has a value. The cleaned shape persists on the next settings write, at which
-// point the stale `listeningMode` key drops out of the blob.
+// `listeningMode` boolean onto `readingMode`. The cleaned shape persists on the
+// next settings write, at which point the stale `listeningMode` key (and the
+// now-removed `autoAdvanceDelaySec`) drop out of the blob.
 function normalizeSettings(raw: unknown): Partial<Settings> {
   if (typeof raw !== 'object' || raw === null) return {};
   const r = { ...(raw as Record<string, unknown>) };
@@ -254,9 +254,7 @@ function normalizeSettings(raw: unknown): Partial<Settings> {
     r['readingMode'] = r['listeningMode'] === true ? 'listening' : 'scaffolded';
   }
   delete r['listeningMode'];
-  if (typeof r['autoAdvanceDelaySec'] !== 'number') {
-    r['autoAdvanceDelaySec'] = 5;
-  }
+  delete r['autoAdvanceDelaySec'];
   return r as Partial<Settings>;
 }
 
