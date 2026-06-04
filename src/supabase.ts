@@ -64,7 +64,7 @@ export async function signInWithPassword(
 ): Promise<void> {
   const email = USERNAME_TO_EMAIL[username.trim().toUpperCase()];
   if (!email) {
-    throw new Error('Unknown user. Try ARD or DPD.');
+    throw new Error('Unknown user, try again');
   }
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) {

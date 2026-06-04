@@ -168,7 +168,7 @@ export function LoginView({
             type="text"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            placeholder="ARD or DPD"
+            placeholder=""
             autoComplete="username"
             autoCapitalize="characters"
             spellCheck={false}
