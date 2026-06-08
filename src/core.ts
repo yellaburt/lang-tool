@@ -407,6 +407,61 @@ export function findNextChapter(
   return siblings[idx + 1]!;
 }
 
+// What a "Resume reading" button should open, for a given set of passages (the
+// whole library for the top-level button, or one folder's passages for a folder
+// button). `advancedToNext` is true when the most-recently-read passage was
+// already finished, so we're pointing at the following item instead.
+export interface ResumeTarget {
+  readonly passage: Passage;
+  readonly advancedToNext: boolean;
+}
+
+// True once the reader has actually started a passage (made progress, or opened
+// it — a brand-new passage stamps lastOpenedAt === createdAt, and the
+// passages_with_state view coalesces a missing reading_state row back to that
+// same created_at, so "opened" reads identically on every device).
+function hasBeenStarted(p: Passage): boolean {
+  return p.lastReadChunkIndex > 0 || p.lastOpenedAt > p.createdAt;
+}
+
+// A passage is finished when it's fully processed and the reader has advanced
+// past its last chunk (lastReadChunkIndex runs one past the final chunk at the
+// end). Mirrors the "100%" condition in passagePercentRead.
+function isPassageFinished(p: Passage): boolean {
+  return (
+    p.processingStatus.kind === 'complete' &&
+    p.lastReadChunkIndex >= p.chunks.length
+  );
+}
+
+// Decide where "Resume reading" should drop the reader, mirroring how a reader
+// thinks about "where I left off":
+//   - Among passages they've actually started, take the most recently opened —
+//     that's the thing they were last reading.
+//   - If they hadn't finished it, resume there. (open-passage restores the saved
+//     chunk position, so this lands exactly where they stopped.)
+//   - If they HAD finished it, point at the next item in the same folder, opened
+//     at its own saved position — the beginning, for an untouched next chapter.
+//   - If the finished passage has no next item (the last chapter, or a
+//     standalone top-level passage with no sequence), return null so the button
+//     disappears.
+// Every input comes from synced reading_state, so this resolves identically on
+// whatever device the reader picks up next.
+export function computeResumeTarget(
+  passages: ReadonlyArray<Passage>,
+): ResumeTarget | null {
+  const started = passages.filter(hasBeenStarted);
+  if (started.length === 0) return null;
+  const current = started.reduce((latest, p) =>
+    p.lastOpenedAt > latest.lastOpenedAt ? p : latest,
+  );
+  if (!isPassageFinished(current)) {
+    return { passage: current, advancedToNext: false };
+  }
+  const next = findNextChapter(passages, current.id);
+  return next ? { passage: next, advancedToNext: true } : null;
+}
+
 // Count "significant new words" in a Spanish chunk relative to its English
 // gloss. Used to decide whether re-read should fire on short chunks. Rules:
 //   - Letter-word that ALSO appears in the English gloss (case-insensitive):

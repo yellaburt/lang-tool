@@ -437,6 +437,71 @@ h2 {
   margin-left: 0.75rem;
 }
 
+/* ===== Resume reading shortcut ===== */
+
+/* Top-level bar: a prominent primary-colored button above the library lists.
+   The lighter `folder` variant sits inside a folder body. */
+.resume-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.resume-bar-library {
+  padding: 0.85rem 0.9rem;
+  margin-bottom: 1.25rem;
+  background: var(--button-bg);
+  color: var(--button-fg);
+}
+
+.resume-bar-library:hover {
+  opacity: 0.9;
+}
+
+.resume-bar-folder {
+  padding: 0.6rem 0.6rem;
+  margin-bottom: 0.5rem;
+  background: var(--surface-soft);
+  color: inherit;
+  border: 1px solid var(--surface-divider);
+}
+
+.resume-bar-folder:hover {
+  background: var(--surface-border);
+}
+
+.resume-bar-icon {
+  font-size: 1.3rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.resume-bar-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.resume-bar-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+}
+
+.resume-bar-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ===== Book folders (compact card + chapter list) ===== */
 
 .book-group {

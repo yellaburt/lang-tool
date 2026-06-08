@@ -3,12 +3,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   assertNever,
   compareChapters,
+  computeResumeTarget,
   countSignificantWords,
   findNextChapter,
   isBookLikeFolder,
   passagePercentRead,
   splitBookIntoChapters,
 } from './core';
+import type { ResumeTarget } from './core';
 import { hasApiKey } from './llm';
 import { getCurrentSession, signOut } from './supabase';
 import {
@@ -701,6 +703,45 @@ function buildFolderCatalog(passages: ReadonlyArray<Passage>): FolderCatalog {
   };
 }
 
+// "Resume reading" shortcut. Opens wherever the reader left off (or the next
+// item, if they finished the last thing they read) and names it, so picking the
+// app back up — on any device — is one tap. `variant` distinguishes the
+// prominent library-wide bar from the lighter per-folder one.
+function ResumeBar({
+  target,
+  dispatch,
+  variant,
+}: {
+  target: ResumeTarget;
+  dispatch: (a: AppAction) => void;
+  variant: 'library' | 'folder';
+}) {
+  return (
+    <button
+      type="button"
+      className={`resume-bar resume-bar-${variant}`}
+      onClick={(e) => {
+        e.currentTarget.blur();
+        dispatch({
+          kind: 'open-passage',
+          passageId: target.passage.id,
+          now: Date.now(),
+        });
+      }}
+    >
+      <span className="resume-bar-icon" aria-hidden="true">
+        ↻
+      </span>
+      <span className="resume-bar-body">
+        <span className="resume-bar-label">
+          {target.advancedToNext ? 'Up next' : 'Resume reading'}
+        </span>
+        <span className="resume-bar-title">{target.passage.title}</span>
+      </span>
+    </button>
+  );
+}
+
 export function LibraryView({ state, dispatch }: ViewProps) {
   const passages = useMemo(
     () =>
@@ -711,6 +752,10 @@ export function LibraryView({ state, dispatch }: ViewProps) {
   );
   const tree = useMemo(() => groupByFolder(passages), [passages]);
   const catalog = useMemo(() => buildFolderCatalog(passages), [passages]);
+  // Most-recent reading position across the whole library, shown above the
+  // document choices. Null when nothing is in progress (or the last item was
+  // finished with nothing after it).
+  const resumeTarget = useMemo(() => computeResumeTarget(passages), [passages]);
 
   return (
     <main className="container">
@@ -729,6 +774,9 @@ export function LibraryView({ state, dispatch }: ViewProps) {
           </button>
         </div>
       </header>
+      {resumeTarget && (
+        <ResumeBar target={resumeTarget} dispatch={dispatch} variant="library" />
+      )}
       {passages.length === 0 ? (
         <p className="muted empty-library">
           No saved passages yet. Click <strong>+ New passage</strong> to paste your first one.
@@ -805,6 +853,18 @@ function FolderGroup({
   const total =
     folder.ungrouped.length +
     folder.subfolders.reduce((n, s) => n + s.passages.length, 0);
+  // Resume position scoped to this folder (its own passages + any subfolders).
+  const folderPassages = useMemo(
+    () => [
+      ...folder.ungrouped,
+      ...folder.subfolders.flatMap((s) => s.passages),
+    ],
+    [folder],
+  );
+  const resumeTarget = useMemo(
+    () => computeResumeTarget(folderPassages),
+    [folderPassages],
+  );
   return (
     <section className="folder-group">
       <FolderHeader
@@ -845,6 +905,13 @@ function FolderGroup({
       />
       {!collapsed && (
         <div className="folder-body">
+          {resumeTarget && (
+            <ResumeBar
+              target={resumeTarget}
+              dispatch={dispatch}
+              variant="folder"
+            />
+          )}
           {folder.ungrouped.length > 0 && (
             <ul className="passage-list">
               {folder.ungrouped.map((p) => (
@@ -916,6 +983,10 @@ function BookFolderGroup({
     chapters[0]!,
   );
   const currentChapter = chapters.indexOf(lastOpened) + 1;
+  const resumeTarget = useMemo(
+    () => computeResumeTarget(chapters),
+    [chapters],
+  );
 
   if (collapsed) {
     return (
@@ -982,6 +1053,13 @@ function BookFolderGroup({
         }}
       />
       <div className="folder-body">
+        {resumeTarget && (
+          <ResumeBar
+            target={resumeTarget}
+            dispatch={dispatch}
+            variant="folder"
+          />
+        )}
         <ul className="passage-list chapter-list">
           {chapters.map((p) => (
             <ChapterRow
@@ -1078,6 +1156,10 @@ function SubfolderGroup({
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const count = subfolder.passages.length;
+  const resumeTarget = useMemo(
+    () => computeResumeTarget(subfolder.passages),
+    [subfolder.passages],
+  );
   return (
     <section className="subfolder-group">
       <FolderHeader
@@ -1120,16 +1202,25 @@ function SubfolderGroup({
         }}
       />
       {!collapsed && (
-        <ul className="passage-list">
-          {subfolder.passages.map((p) => (
-            <PassageRow
-              key={p.id}
-              passage={p}
-              catalog={catalog}
+        <>
+          {resumeTarget && (
+            <ResumeBar
+              target={resumeTarget}
               dispatch={dispatch}
+              variant="folder"
             />
-          ))}
-        </ul>
+          )}
+          <ul className="passage-list">
+            {subfolder.passages.map((p) => (
+              <PassageRow
+                key={p.id}
+                passage={p}
+                catalog={catalog}
+                dispatch={dispatch}
+              />
+            ))}
+          </ul>
+        </>
       )}
     </section>
   );

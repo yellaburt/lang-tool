@@ -5,6 +5,7 @@ import {
   applyReviewEvent,
   chunkPassage,
   compareChapters,
+  computeResumeTarget,
   defaultSettings,
   dueVocabItemIds,
   emptyLearnerState,
@@ -705,6 +706,93 @@ describe('findNextChapter', () => {
   it('returns null for a top-level (folderless) passage', () => {
     const loose = [makeChapter('x', 'Chapter 1', { folder: null })];
     expect(findNextChapter(loose, 'x' as PassageId)).toBeNull();
+  });
+});
+
+describe('computeResumeTarget', () => {
+  // A passage with chunks, configured as in-progress (partly read) or finished.
+  // `opened` defaults to true (lastOpenedAt after createdAt) so it counts as
+  // "started"; pass opened: false for a never-touched passage.
+  function reading(
+    id: string,
+    title: string,
+    opts: {
+      lastReadChunkIndex?: number;
+      chunkCount?: number;
+      complete?: boolean;
+      openedAt?: number;
+      opened?: boolean;
+      folder?: string | null;
+    } = {},
+  ): Passage {
+    const chunkCount = opts.chunkCount ?? 3;
+    const opened = opts.opened ?? true;
+    return makeChapter(id, title, {
+      folder: opts.folder === undefined ? 'Book' : opts.folder,
+      chunks: Array.from({ length: chunkCount }, () => ({}) as Chunk),
+      lastReadChunkIndex: opts.lastReadChunkIndex ?? 0,
+      processingStatus: opts.complete
+        ? { kind: 'complete' }
+        : { kind: 'in-progress', processedSentenceCount: chunkCount },
+      createdAt: T0,
+      lastOpenedAt: opened ? (opts.openedAt ?? T0 + 1000) : T0,
+    });
+  }
+
+  it('returns null when nothing has been started', () => {
+    const ps = [reading('a', 'Chapter 1', { opened: false })];
+    expect(computeResumeTarget(ps)).toBeNull();
+  });
+
+  it('resumes the most-recently-opened unfinished passage', () => {
+    const ps = [
+      reading('a', 'Chapter 1', { lastReadChunkIndex: 1, openedAt: T0 + 100 }),
+      reading('b', 'Chapter 2', { lastReadChunkIndex: 1, openedAt: T0 + 500 }),
+    ];
+    const target = computeResumeTarget(ps);
+    expect(target?.passage.id).toBe('b');
+    expect(target?.advancedToNext).toBe(false);
+  });
+
+  it('advances to the next chapter when the last-read one is finished', () => {
+    const ps = [
+      reading('c1', 'Chapter 1', {
+        lastReadChunkIndex: 3, // one past the last chunk
+        complete: true,
+        openedAt: T0 + 500,
+      }),
+      reading('c2', 'Chapter 2', { opened: false }),
+    ];
+    const target = computeResumeTarget(ps);
+    expect(target?.passage.id).toBe('c2');
+    expect(target?.advancedToNext).toBe(true);
+  });
+
+  it('hides the button after the final item is finished', () => {
+    const ps = [
+      reading('c1', 'Chapter 1', {
+        lastReadChunkIndex: 3,
+        complete: true,
+        openedAt: T0 + 100,
+      }),
+      reading('c2', 'Chapter 2', {
+        lastReadChunkIndex: 3,
+        complete: true,
+        openedAt: T0 + 500, // most recent, and it's the last chapter
+      }),
+    ];
+    expect(computeResumeTarget(ps)).toBeNull();
+  });
+
+  it('has no "next" for a finished standalone top-level passage', () => {
+    const ps = [
+      reading('s', 'A Short Story', {
+        folder: null,
+        lastReadChunkIndex: 3,
+        complete: true,
+      }),
+    ];
+    expect(computeResumeTarget(ps)).toBeNull();
   });
 });
 
