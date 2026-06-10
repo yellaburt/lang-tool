@@ -184,12 +184,16 @@ export type ThemeName =
 
 export type EmphasisStyle = 'color' | 'bold' | 'both' | 'none';
 
-// The three reading flows. 'scaffolded' (default): Spanish audio → Spanish text
+// The four reading flows. 'scaffolded' (default): Spanish audio → Spanish text
 // → English → optional re-read, all automatic. 'listening': adds a hidden-Spanish
 // audio phase first (over-your-head practice). 'light': Spanish audio plays once
 // with text visible, then PAUSES — the reader taps Continue / Show English / a
 // word to drive. Never auto-advances. No automatic English, no re-read.
-export type ReadingMode = 'scaffolded' | 'listening' | 'light';
+// 'reading': text-first, fully manual. Spanish text shows with NO audio; the
+// reader works out meaning at their own pace (word tap + on-demand "Show
+// English"), then taps Continue. With readAloudOnAdvance on, the chunk's Spanish
+// audio plays once at the moment of advancing (the only audio this mode has).
+export type ReadingMode = 'scaffolded' | 'listening' | 'light' | 'reading';
 
 export interface Settings {
   readonly dialect: 'es-MX' | 'es-ES' | 'es-neutral';
@@ -219,6 +223,10 @@ export interface Settings {
   // The mode a fresh sign-in starts in, per user (DPD and ARD differ). Persisted;
   // changing it does NOT change the current session's `readingMode`.
   readonly defaultReadingMode: ReadingMode;
+  // 'reading' mode only. When true (default), pressing Continue plays the chunk's
+  // Spanish audio once and advances when it ends; when false, Continue advances
+  // immediately with no audio. Ignored by the other three modes.
+  readonly readAloudOnAdvance: boolean;
   readonly theme: ThemeName;
   readonly emphasisStyle: EmphasisStyle;
 }

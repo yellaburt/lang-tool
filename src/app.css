@@ -1621,6 +1621,18 @@ button.ghost {
   border: 1px solid var(--surface-border);
 }
 
+/* Reading mode reuses the light-action-bar dock/float behavior but with bigger
+   tap targets — it's used on a tablet during exercise, where precision is low.
+   Taller buttons, larger text, a bit more breathing room between them. */
+.reading-action-bar .light-buttons {
+  gap: 1rem;
+}
+
+.reading-action-bar .light-btn {
+  min-height: 64px;
+  font-size: 1.15rem;
+}
+
 /* Desktop: a centered floating bar rather than a full-width dock — the reading
    column is narrow and a full-bleed bar looks unmoored. */
 @media (min-width: 640px) {

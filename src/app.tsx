@@ -80,11 +80,17 @@ export interface UiState {
   readonly spanishTtsDone: boolean;
   readonly englishTtsDone: boolean;
   readonly reReadDone: boolean;
-  // Light mode only. englishRevealed: the reader tapped "Show English" for the
-  // current chunk (English is gated behind a deliberate action in light mode).
-  // Resets on every chunk change. Light mode never auto-advances — the reader
-  // always taps Continue / Show English to move on.
+  // Light AND reading mode. englishRevealed: the reader tapped "Show English"
+  // for the current chunk (English is gated behind a deliberate action in both
+  // modes). Resets on every chunk change. Neither mode auto-advances — the
+  // reader always taps Continue / Show English to move on.
   readonly englishRevealed: boolean;
+  // 'reading' mode only. The per-chunk state machine has two states: READING
+  // (silent, text visible — readingSpeaking false) and SPEAKING (the chunk's
+  // Spanish audio plays once after Continue, then advances — readingSpeaking
+  // true). Only entered when readAloudOnAdvance is on. Resets on every chunk
+  // change, so each chunk opens fresh in READING.
+  readonly readingSpeaking: boolean;
   readonly isPaused: boolean;
   readonly processingError: string | null;
   readonly settingsOpen: boolean;
@@ -186,9 +192,17 @@ export type AppAction =
   | { readonly kind: 'toggle-re-read-short-chunks' }
   | { readonly kind: 'set-reading-mode'; readonly mode: ReadingMode }
   | { readonly kind: 'set-default-reading-mode'; readonly mode: ReadingMode }
+  | { readonly kind: 'toggle-read-aloud-on-advance' }
   // Light mode: reveal the English gloss for the current chunk. English is gated
   // behind this deliberate action; advancing still requires a Continue tap.
   | { readonly kind: 'reveal-english' }
+  // Reading mode: toggle the English gloss for the current chunk on/off. Unlike
+  // light mode's one-way reveal, the reader can hide it again.
+  | { readonly kind: 'toggle-reading-english' }
+  // Reading mode: the reader tapped Continue. From READING it either enters
+  // SPEAKING (readAloudOnAdvance on) or advances immediately; during SPEAKING it
+  // skips the rest of the audio and advances now.
+  | { readonly kind: 'reading-continue' }
   | { readonly kind: 'open-passage'; readonly passageId: PassageId; readonly now: number }
   | { readonly kind: 'delete-passage'; readonly passageId: PassageId }
   | { readonly kind: 'rename-passage'; readonly passageId: PassageId; readonly title: string }
@@ -273,6 +287,7 @@ function freshPhaseFlags() {
     englishTtsDone: false,
     reReadDone: false,
     englishRevealed: false,
+    readingSpeaking: false,
   } as const;
 }
 
@@ -322,6 +337,28 @@ function setCurrentChunkIndex(state: AppState, newIndex: number): AppState {
         ...state.learner.passages,
         [passageId]: { ...passage, lastReadChunkIndex: clamped },
       },
+    },
+  };
+}
+
+// Move to the next chunk, resetting the per-chunk phase flags and clearing any
+// pause. Shared by the 'advance' action and reading mode's Continue (both the
+// immediate-advance and the skip-the-audio paths land here).
+function advanceToNextChunk(state: AppState): AppState {
+  const passageId = state.ui.currentPassageId;
+  if (passageId === null) return state;
+  const passage = state.learner.passages[passageId];
+  if (!passage) return state;
+  const next = setCurrentChunkIndex(state, passage.lastReadChunkIndex + 1);
+  return {
+    ...next,
+    ui: {
+      ...next.ui,
+      ...freshPhaseFlags(),
+      // Navigating to a new chunk resumes playback (matching jump-to-start).
+      // In light mode this is what lets Continue clear a pause left behind by
+      // a dismissed word lookup, so the next chunk's Spanish actually plays.
+      isPaused: false,
     },
   };
 }
@@ -630,24 +667,8 @@ function reducer(state: AppState, action: AppAction): AppState {
       return { ...state, ui: { ...state.ui, reReadDone: true } };
     }
 
-    case 'advance': {
-      const passageId = state.ui.currentPassageId;
-      if (passageId === null) return state;
-      const passage = state.learner.passages[passageId];
-      if (!passage) return state;
-      const next = setCurrentChunkIndex(state, passage.lastReadChunkIndex + 1);
-      return {
-        ...next,
-        ui: {
-          ...next.ui,
-          ...freshPhaseFlags(),
-          // Navigating to a new chunk resumes playback (matching jump-to-start).
-          // In light mode this is what lets Continue clear a pause left behind by
-          // a dismissed word lookup, so the next chunk's Spanish actually plays.
-          isPaused: false,
-        },
-      };
-    }
+    case 'advance':
+      return advanceToNextChunk(state);
 
     case 'go-back': {
       const passageId = state.ui.currentPassageId;
@@ -779,6 +800,50 @@ function reducer(state: AppState, action: AppAction): AppState {
         ...state,
         learner: updateSettings(state.learner, { defaultReadingMode: action.mode }),
       };
+
+    case 'toggle-read-aloud-on-advance':
+      return {
+        ...state,
+        learner: updateSettings(state.learner, {
+          readAloudOnAdvance: !state.learner.settings.readAloudOnAdvance,
+        }),
+      };
+
+    case 'toggle-reading-english':
+      // Reading mode: flip the gloss on/off. Clear isPaused so a pause left by a
+      // dismissed word lookup doesn't linger (reading mode has no audio to gate,
+      // but isPaused also blocks the SPEAKING/advance path, so keep it clean).
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          englishRevealed: !state.ui.englishRevealed,
+          isPaused: false,
+        },
+      };
+
+    case 'reading-continue': {
+      // During SPEAKING, Continue skips the rest of the audio and advances now.
+      if (state.ui.readingSpeaking) return advanceToNextChunk(state);
+      // From READING: hide the English immediately, then branch on the setting.
+      if (state.learner.settings.readAloudOnAdvance) {
+        // Enter SPEAKING: text stays visible, English hidden, Spanish audio
+        // plays once (the speech effect fires on readingSpeaking) then advances.
+        // Clear isPaused so a dismissed-lookup pause can't block the audio.
+        return {
+          ...state,
+          ui: {
+            ...state.ui,
+            englishRevealed: false,
+            readingSpeaking: true,
+            isPaused: false,
+          },
+        };
+      }
+      // readAloudOnAdvance off: advance immediately (freshPhaseFlags hides the
+      // English on the next chunk).
+      return advanceToNextChunk(state);
+    }
 
     case 'reveal-english':
       // Light mode: the reader asked to see the English. Clear isPaused so any

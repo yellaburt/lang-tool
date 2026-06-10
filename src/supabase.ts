@@ -253,6 +253,10 @@ function normalizeSettings(raw: unknown): Partial<Settings> {
   if (r['readingMode'] === undefined) {
     r['readingMode'] = r['listeningMode'] === true ? 'listening' : 'scaffolded';
   }
+  // 'reading' mode's read-aloud-on-advance toggle: absent in older blobs → on.
+  if (r['readAloudOnAdvance'] === undefined) {
+    r['readAloudOnAdvance'] = true;
+  }
   delete r['listeningMode'];
   delete r['autoAdvanceDelaySec'];
   return r as Partial<Settings>;

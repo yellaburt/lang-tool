@@ -420,6 +420,17 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
               />
               <span>Light</span>
             </label>
+            <label className="mode-option">
+              <input
+                type="radio"
+                name="reading-mode"
+                checked={settings.readingMode === 'reading'}
+                onChange={() =>
+                  dispatch({ kind: 'set-reading-mode', mode: 'reading' })
+                }
+              />
+              <span>Reading</span>
+            </label>
           </div>
           <p className="muted small">
             {settings.readingMode === 'scaffolded' &&
@@ -428,7 +439,24 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
               'Each chunk plays in phases: (1) Spanish audio with the text hidden — pure listening test; (2) Spanish text appears and audio plays again; (3) English text appears (and plays if English aloud is on).'}
             {settings.readingMode === 'light' &&
               'Spanish audio plays once with the text visible, then waits. Tap Show English to see the gloss, then tap Continue (or press Space) to move on. Nothing advances on its own — you always drive.'}
+            {settings.readingMode === 'reading' &&
+              'Text-first and silent: the Spanish shows with no audio so you work out the meaning at your own pace. Tap a word to look it up, or Show English for the gloss; tap Continue (or press Space) to move on. Nothing auto-advances.'}
           </p>
+          {settings.readingMode === 'reading' && (
+            <label
+              className="toggle-row"
+              title="In Reading mode, play the chunk's Spanish audio once when you tap Continue, then advance when it finishes"
+            >
+              <input
+                type="checkbox"
+                checked={settings.readAloudOnAdvance}
+                onChange={() =>
+                  dispatch({ kind: 'toggle-read-aloud-on-advance' })
+                }
+              />
+              <span>Play Spanish audio when advancing</span>
+            </label>
+          )}
           <div className="default-mode-row">
             <label className="voice-select">
               <span>Default on sign-in</span>
@@ -444,6 +472,7 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
                 <option value="scaffolded">Scaffolded</option>
                 <option value="listening">Listening</option>
                 <option value="light">Light</option>
+                <option value="reading">Reading</option>
               </select>
             </label>
             <p className="muted small">
@@ -1808,6 +1837,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     englishTtsDone,
     reReadDone,
     englishRevealed,
+    readingSpeaking,
     isPaused,
   } = state.ui;
   const readingMode = state.learner.settings.readingMode;
@@ -1816,6 +1846,11 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   // false so the Spanish phase plays once with text visible.
   const listeningMode = readingMode === 'listening';
   const lightMode = readingMode === 'light';
+  // 'reading' mode: text-first, fully manual, silent until Continue. Its Spanish
+  // audio only ever plays during the SPEAKING phase (readingSpeaking), and only
+  // when readAloudOnAdvance is on.
+  const textMode = readingMode === 'reading';
+  const readAloudOnAdvance = state.learner.settings.readAloudOnAdvance;
   const speechPaceMultiplier = state.learner.settings.speechPaceMultiplier;
   const readPaceMultiplier = state.learner.settings.readPaceMultiplier;
   const englishTtsEnabled = state.learner.settings.englishTtsEnabled;
@@ -1918,7 +1953,11 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   // and advance — so the eye moves straight down into the next chunk's
   // Spanish cell instead of flashing back to English first.
   let activeSide: 'tl' | 'en';
-  if (lightMode) {
+  if (textMode) {
+    // Reading mode: no audio gates the highlight — it sits on Spanish while the
+    // reader works, moving to English only once they've revealed the gloss.
+    activeSide = englishRevealed ? 'en' : 'tl';
+  } else if (lightMode) {
     // Light mode: the highlight stays on Spanish while the reader decides,
     // moving to English only once they've revealed it.
     activeSide = spanishTtsDone && englishRevealed ? 'en' : 'tl';
@@ -1931,6 +1970,16 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   } else {
     activeSide = 'en';
   }
+
+  // Whether the CURRENT chunk's English gloss is visible. Past chunks always
+  // show it (handled in SentenceItem). The three audio-driven modes reveal it
+  // once Spanish TTS has played (light additionally gates on a Show English
+  // tap); reading mode is silent, so it keys purely on the Show English toggle.
+  const showCurrentGloss = textMode
+    ? englishRevealed
+    : lightMode
+      ? spanishTtsDone && englishRevealed
+      : spanishTtsDone;
 
   const sentencesRef = useRef<HTMLOListElement | null>(null);
   // Fade-out state for the active row, just before auto-advance. The `<ol>`
@@ -2084,6 +2133,10 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     // In listening mode, wait for the hidden Spanish phase to complete
     // before firing the visible-text Spanish phase.
     if (listeningMode && !listeningHiddenSpanishDone) return;
+    // Reading mode is silent in the READING state — the Spanish audio only
+    // plays during the SPEAKING phase (after Continue, with readAloudOnAdvance
+    // on). Until then, never start an utterance.
+    if (textMode && !readingSpeaking) return;
 
     if (settingsOpen) {
       if (spanishSpeechRef.current && !spanishSpeechRef.current.isEnded()) {
@@ -2128,6 +2181,8 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     spanishTtsDone,
     listeningMode,
     listeningHiddenSpanishDone,
+    textMode,
+    readingSpeaking,
     isPaused,
     settingsOpen,
     isPlaceholderChunk,
@@ -2140,6 +2195,9 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   // user has turned English audio on.
   useEffect(() => {
     if (!currentChunk) return;
+    // Reading mode never reads the English gloss aloud — it's a text-only,
+    // on-demand reveal. The only audio this mode has is the Spanish at advance.
+    if (textMode) return;
     if (!spanishTtsDone) return;
     if (englishTtsDone) return;
     if (!englishTtsEnabled) return;
@@ -2194,6 +2252,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     englishTtsDone,
     englishTtsEnabled,
     lightMode,
+    textMode,
     englishRevealed,
     isPaused,
     settingsOpen,
@@ -2209,8 +2268,9 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   // voice (e.g., opposite gender) also trains cross-speaker comprehension.
   useEffect(() => {
     if (!currentChunk) return;
-    // Light mode never re-reads — the reader controls repetition via Replay.
-    if (lightMode) return;
+    // Light and reading modes never re-read — the reader controls repetition via
+    // Replay.
+    if (lightMode || textMode) return;
     if (!reReadEnabled) return;
     if (!spanishTtsDone) return;
     if (englishTtsEnabled && !englishTtsDone) return;
@@ -2267,6 +2327,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   }, [
     currentChunk?.id,
     lightMode,
+    textMode,
     reReadEnabled,
     reReadShortChunks,
     spanishTtsDone,
@@ -2305,9 +2366,10 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     if (isPaused) return;
     if (settingsOpen) return;
 
-    // Light mode never auto-advances: the reader always drives, tapping
-    // Continue (or Show English first). No timer is ever started here.
-    if (lightMode) return;
+    // Light AND reading modes never auto-advance: the reader always drives,
+    // tapping Continue. No timer is ever started here. (Reading mode's
+    // SPEAKING → advance is handled by its own audio-end effect, not a timer.)
+    if (lightMode || textMode) return;
 
     if (!allSpeechDoneForCurrentChunk) return;
 
@@ -2336,10 +2398,31 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     currentChunk?.englishGloss,
     allSpeechDoneForCurrentChunk,
     lightMode,
+    textMode,
     isPaused,
     settingsOpen,
     readPaceMultiplier,
     englishTtsEnabled,
+    dispatch,
+  ]);
+
+  // Reading mode SPEAKING → advance. After Continue (with readAloudOnAdvance on)
+  // the chunk's Spanish plays once; when it ends (spanishTtsDone flips true) we
+  // advance to the next chunk. This is NOT a timer-based auto-advance — it's the
+  // direct, intended consequence of the reader's Continue tap. Skipping the
+  // audio mid-play is handled separately by the 'reading-continue' reducer.
+  useEffect(() => {
+    if (!textMode) return;
+    if (!readingSpeaking) return;
+    if (!spanishTtsDone) return;
+    if (isPaused || settingsOpen) return;
+    dispatch({ kind: 'advance' });
+  }, [
+    textMode,
+    readingSpeaking,
+    spanishTtsDone,
+    isPaused,
+    settingsOpen,
     dispatch,
   ]);
 
@@ -2352,13 +2435,22 @@ export function ReadingView({ state, dispatch }: ViewProps) {
 
       if (e.key === ' ' || e.code === 'Space') {
         e.preventDefault();
-        // Light mode: once parked awaiting input, Space means Continue. While
-        // Spanish audio is still playing (not yet parked), Space still pauses.
-        if (lightMode && lightAwaitingInput) {
+        // Reading mode: Space is always Continue (the mode never has playing
+        // audio to pause in the READING state, and during SPEAKING Continue
+        // means "skip + advance").
+        if (textMode) {
+          dispatch({ kind: 'reading-continue' });
+        } else if (lightMode && lightAwaitingInput) {
+          // Light mode: once parked awaiting input, Space means Continue. While
+          // Spanish audio is still playing (not yet parked), Space still pauses.
           dispatch({ kind: 'advance' });
         } else {
           dispatch({ kind: 'toggle-pause' });
         }
+      } else if ((e.key === 'e' || e.key === 'E') && textMode) {
+        // Reading mode: E toggles the gloss on/off.
+        e.preventDefault();
+        dispatch({ kind: 'toggle-reading-english' });
       } else if (
         (e.key === 'e' || e.key === 'E') &&
         lightMode &&
@@ -2383,7 +2475,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     }
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [dispatch, lightMode, lightAwaitingInput, englishRevealed]);
+  }, [dispatch, lightMode, textMode, lightAwaitingInput, englishRevealed]);
 
   if (!passage) {
     return <ErrorView dispatch={dispatch} message="No passage loaded." />;
@@ -2450,7 +2542,6 @@ export function ReadingView({ state, dispatch }: ViewProps) {
               key={sentence[0]!.id}
               sentence={sentence}
               currentChunkIndex={currentChunkIndex}
-              spanishTtsDone={spanishTtsDone}
               activeSide={activeSide}
               isFading={isFading}
               wordLookup={state.ui.wordLookup}
@@ -2458,7 +2549,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
               hideCurrentChunkText={
                 listeningMode && !listeningHiddenSpanishDone
               }
-              revealEnglishCurrent={!lightMode || englishRevealed}
+              showCurrentGloss={showCurrentGloss}
               dispatch={dispatch}
             />
           ))}
@@ -2569,6 +2660,42 @@ export function ReadingView({ state, dispatch }: ViewProps) {
           </div>
         )}
 
+      {/* Reading mode: a persistent two-button bar (Show/Hide English +
+          Continue). Unlike light mode it's shown the whole time — there's no
+          audio phase to wait for, and during SPEAKING Continue must stay
+          tappable so the reader can skip the audio. Larger tap targets
+          (.reading-action-bar) for tablet use mid-exercise. */}
+      {textMode &&
+        !isDone &&
+        state.ui.wordLookup === null &&
+        state.ui.grammarPanel === null &&
+        !settingsOpen && (
+          <div className="light-action-bar reading-action-bar">
+            <div className="light-buttons">
+              <button
+                type="button"
+                className="light-btn light-btn-secondary"
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  dispatch({ kind: 'toggle-reading-english' });
+                }}
+              >
+                {englishRevealed ? 'Hide English' : 'Show English'}
+              </button>
+              <button
+                type="button"
+                className="light-btn light-btn-primary"
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  dispatch({ kind: 'reading-continue' });
+                }}
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        )}
+
       {/* Resume affordance. Fixed to the bottom of the screen (outside the
           scroller) so it's always fully visible and easy to tap — the reader's
           instinct is to tap the "Paused" text to continue. Shown only for a
@@ -2578,6 +2705,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
           affordance once Spanish has played, so suppress the badge then too. */}
       {isPaused &&
         !(lightMode && spanishTtsDone) &&
+        !textMode &&
         state.ui.wordLookup === null &&
         state.ui.grammarPanel === null &&
         !settingsOpen && (
@@ -2618,7 +2746,6 @@ function groupBySentence(chunks: ReadonlyArray<Chunk>): ReadonlyArray<ReadonlyAr
 interface SentenceItemProps {
   readonly sentence: ReadonlyArray<Chunk>;
   readonly currentChunkIndex: number;
-  readonly spanishTtsDone: boolean;
   readonly activeSide: 'tl' | 'en';
   readonly isFading: boolean;
   readonly wordLookup: WordLookupUiState | null;
@@ -2627,22 +2754,23 @@ interface SentenceItemProps {
   // current chunk only. The user listens without seeing the words. Past
   // sentences stay fully visible.
   readonly hideCurrentChunkText: boolean;
-  // Whether the current chunk's English may be shown. Always true except in
-  // light mode, where English is gated until the reader taps "Show English".
-  readonly revealEnglishCurrent: boolean;
+  // Whether the CURRENT chunk's English gloss should be shown. Past sub-chunks
+  // always show their gloss; this only gates the actively-read chunk. Computed
+  // in ReadingView per mode (audio-done, light's Show-English gate, or reading
+  // mode's Show-English toggle).
+  readonly showCurrentGloss: boolean;
   readonly dispatch: (a: AppAction) => void;
 }
 
 function SentenceItem({
   sentence,
   currentChunkIndex,
-  spanishTtsDone,
   activeSide,
   isFading,
   wordLookup,
   grammarPanel,
   hideCurrentChunkText,
-  revealEnglishCurrent,
+  showCurrentGloss,
   dispatch,
 }: SentenceItemProps) {
   const hasCurrent = sentence.some((c) => c.index === currentChunkIndex);
@@ -2700,8 +2828,7 @@ function SentenceItem({
           // hide only applies to the actively-listening chunk.
           const hideForListening = isCurrentSub && hideCurrentChunkText;
           const showGloss =
-            !isCurrentSub ||
-            (spanishTtsDone && revealEnglishCurrent && c.englishGloss !== null);
+            !isCurrentSub || (showCurrentGloss && c.englishGloss !== null);
           let rowCls = isCurrentSub ? 'pair-row current' : 'pair-row past';
           if (isCurrentSub) {
             // Emphasis follows the audio through the playback sequence.
