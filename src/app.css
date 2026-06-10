@@ -1013,10 +1013,15 @@ button.ghost {
   margin: 0;
 }
 
-/* Reading-mode picker: a segmented control of three radio options. The native
-   radio dot is hidden; the whole pill highlights when its option is checked. */
+/* Reading-mode picker: a segmented control of four radio options. The native
+   radio dot is hidden; the whole pill highlights when its option is checked.
+   A grid (not flex) keeps the cells equal width and wraps cleanly: one row on
+   the wide settings modal (caps at 520px), a 2×2 grid on phones — four nowrap
+   labels in one flex row were too narrow on a phone and spilled past their
+   ovals. */
 .mode-picker {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
   gap: 0.25rem;
   margin-bottom: 0.6rem;
   border: 1px solid var(--surface-border);
@@ -1024,8 +1029,14 @@ button.ghost {
   padding: 0.2rem;
 }
 
+@media (max-width: 460px) {
+  .mode-picker {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 .mode-option {
-  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
