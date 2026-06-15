@@ -401,6 +401,16 @@ export async function callChunkAndGloss(
   }
   // Log the technical detail for debugging, then surface the friendly one.
   console.error('chunk-and-gloss failed after retries:', lastErr);
+  // A refused batch must keep its ContentRefusedError type so the batch
+  // fetcher inserts a […] placeholder and continues to the next batch,
+  // rather than failing the whole passage. Re-wrapping it in a plain Error
+  // (as the catch-all below does) erases the type and turns a skippable
+  // refusal into a dead-end "Try again" loop on the same content.
+  if (lastErr instanceof ContentRefusedError) throw lastErr;
+  // Other non-retryable failures (overloaded / unavailable) already carry a
+  // server-crafted, user-ready message — surface it verbatim instead of
+  // flattening it to the generic catch-all.
+  if (lastErr instanceof NonRetryableError) throw new Error(lastErr.message);
   throw new Error(humanizeChunkAndGlossError(lastErr));
 }
 
