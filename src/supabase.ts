@@ -245,8 +245,8 @@ export async function upsertReadingState(
 // single JSONB blob (no per-setting columns), so schema evolution happens here
 // in the app layer, not in SQL migrations. Currently: map the legacy
 // `listeningMode` boolean onto `readingMode`. The cleaned shape persists on the
-// next settings write, at which point the stale `listeningMode` key (and the
-// now-removed `autoAdvanceDelaySec`) drop out of the blob.
+// next settings write, at which point the stale `listeningMode`,
+// `autoAdvanceDelaySec`, and `defaultReadingMode` keys drop out of the blob.
 function normalizeSettings(raw: unknown): Partial<Settings> {
   if (typeof raw !== 'object' || raw === null) return {};
   const r = { ...(raw as Record<string, unknown>) };
@@ -259,6 +259,9 @@ function normalizeSettings(raw: unknown): Partial<Settings> {
   }
   delete r['listeningMode'];
   delete r['autoAdvanceDelaySec'];
+  // `readingMode` is now sticky (persisted + synced), so the old per-user
+  // sign-in default is gone. Drop the stale key; it falls out on the next write.
+  delete r['defaultReadingMode'];
   return r as Partial<Settings>;
 }
 

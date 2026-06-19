@@ -19,7 +19,6 @@ import {
   ChunkId,
   EmphasisStyle,
   Passage,
-  ReadingMode,
   Settings,
   ThemeName,
 } from './types';
@@ -457,29 +456,9 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
               <span>Play Spanish audio when advancing</span>
             </label>
           )}
-          <div className="default-mode-row">
-            <label className="voice-select">
-              <span>Default on sign-in</span>
-              <select
-                value={settings.defaultReadingMode}
-                onChange={(e) =>
-                  dispatch({
-                    kind: 'set-default-reading-mode',
-                    mode: e.target.value as ReadingMode,
-                  })
-                }
-              >
-                <option value="scaffolded">Scaffolded</option>
-                <option value="listening">Listening</option>
-                <option value="light">Light</option>
-                <option value="reading">Reading</option>
-              </select>
-            </label>
-            <p className="muted small">
-              The mode each fresh sign-in starts in. Changing it does not affect
-              the current session selected above.
-            </p>
-          </div>
+          <p className="muted small">
+            Your reading mode is remembered across sessions and devices.
+          </p>
         </details>
 
         <details className="modal-section">
@@ -2550,6 +2529,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
                 listeningMode && !listeningHiddenSpanishDone
               }
               showCurrentGloss={showCurrentGloss}
+              textMode={textMode}
               dispatch={dispatch}
             />
           ))}
@@ -2759,6 +2739,9 @@ interface SentenceItemProps {
   // in ReadingView per mode (audio-done, light's Show-English gate, or reading
   // mode's Show-English toggle).
   readonly showCurrentGloss: boolean;
+  // Reading mode only: surfaces a Continue button inside the lookup/grammar
+  // panels so the reader can advance straight from an open definition.
+  readonly textMode: boolean;
   readonly dispatch: (a: AppAction) => void;
 }
 
@@ -2771,6 +2754,7 @@ function SentenceItem({
   grammarPanel,
   hideCurrentChunkText,
   showCurrentGloss,
+  textMode,
   dispatch,
 }: SentenceItemProps) {
   const hasCurrent = sentence.some((c) => c.index === currentChunkIndex);
@@ -2804,10 +2788,18 @@ function SentenceItem({
         </div>
         {enText.length > 0 && <div className="en">{enText}</div>}
         {lookupInThisSentence && wordLookup && (
-          <WordLookupPanel lookup={wordLookup} dispatch={dispatch} />
+          <WordLookupPanel
+            lookup={wordLookup}
+            textMode={textMode}
+            dispatch={dispatch}
+          />
         )}
         {grammarInThisSentence && grammarPanel && (
-          <GrammarPanel panel={grammarPanel} dispatch={dispatch} />
+          <GrammarPanel
+            panel={grammarPanel}
+            textMode={textMode}
+            dispatch={dispatch}
+          />
         )}
       </li>
     );
@@ -2873,10 +2865,18 @@ function SentenceItem({
         })}
       </div>
       {lookupInThisSentence && wordLookup && (
-        <WordLookupPanel lookup={wordLookup} dispatch={dispatch} />
+        <WordLookupPanel
+          lookup={wordLookup}
+          textMode={textMode}
+          dispatch={dispatch}
+        />
       )}
       {grammarInThisSentence && grammarPanel && (
-        <GrammarPanel panel={grammarPanel} dispatch={dispatch} />
+        <GrammarPanel
+          panel={grammarPanel}
+          textMode={textMode}
+          dispatch={dispatch}
+        />
       )}
     </li>
   );
@@ -3248,9 +3248,11 @@ function ClickableSpanish({
 
 function WordLookupPanel({
   lookup,
+  textMode,
   dispatch,
 }: {
   lookup: WordLookupUiState;
+  textMode: boolean;
   dispatch: (a: AppAction) => void;
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -3281,6 +3283,23 @@ function WordLookupPanel({
       >
       <div className="lookup-header">
         <span className="lookup-word">{lookup.word}</span>
+        {/* Reading mode: advance straight from the open definition. Only once
+            the definition is loaded, so it doesn't flicker in while looking up.
+            Sits in the header so it never crowds the meaning/verb/notes body.
+            'reading-continue' also closes this panel (see reducer). */}
+        {textMode && lookup.kind === 'ready' && (
+          <button
+            type="button"
+            className="lookup-continue"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              dispatch({ kind: 'reading-continue' });
+            }}
+            title="Continue to the next chunk (closes this definition)"
+          >
+            Continue →
+          </button>
+        )}
         <button
           type="button"
           className="lookup-dismiss"
@@ -3339,9 +3358,11 @@ function WordLookupPanel({
 
 function GrammarPanel({
   panel,
+  textMode,
   dispatch,
 }: {
   panel: GrammarPanelUiState;
+  textMode: boolean;
   dispatch: (a: AppAction) => void;
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -3369,6 +3390,21 @@ function GrammarPanel({
       >
         <div className="lookup-header">
           <span className="lookup-word">Grammar</span>
+          {/* Reading mode: advance straight from the open panel (see
+              WordLookupPanel for the rationale). 'reading-continue' closes it. */}
+          {textMode && panel.kind === 'ready' && (
+            <button
+              type="button"
+              className="lookup-continue"
+              onClick={(e) => {
+                e.currentTarget.blur();
+                dispatch({ kind: 'reading-continue' });
+              }}
+              title="Continue to the next chunk (closes this panel)"
+            >
+              Continue →
+            </button>
+          )}
           <button
             type="button"
             className="lookup-dismiss"

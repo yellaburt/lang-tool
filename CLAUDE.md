@@ -69,11 +69,12 @@ trying to be Duolingo or a SaaS — three users total, ever.
   story, a news article), Claude often uses the real title.
 
 ### Reading mode
-One of three reading flows is active per session (`settings.readingMode`,
-picked in Settings → Reading mode). Each fresh sign-in starts in the user's
-`defaultReadingMode` (seeded onto `readingMode` in the `library-loaded`
-reducer; set via the "Default on sign-in" dropdown — DPD and ARD pick their
-own). Per-session changes stay in memory and don't change the default:
+One of four reading flows is active (`settings.readingMode`, picked in
+Settings → Reading mode). The choice is **sticky**: it's persisted in the
+settings blob and synced across devices, so the last mode a user picked carries
+over to their next session on any device (the `library-loaded` reducer uses the
+loaded value as-is — it is no longer reseeded on sign-in). DPD and ARD each have
+their own remembered mode:
 - **Scaffolded** (default): Spanish audio plays, Spanish text visible, English
   gloss appears, hold for reading time, auto-advance.
 - **Listening**: a "hidden Spanish audio" phase comes first — text hidden, just
@@ -124,6 +125,11 @@ Home (jump to start).
 - Every lookup is logged to a per-user history table for future review.
 - Tap × on the panel to dismiss without resuming. Tap ▶ Resume on the
   control bar to dismiss AND continue reading.
+- In **Reading mode**, once the definition loads the panel header also shows a
+  **Continue →** button (next to the ×) that advances to the next chunk and
+  closes the panel in one tap — so you don't have to close the dict first to
+  reach the now-hidden Continue bar. Grammar panel gets the same. (Advancing via
+  any path now also clears a stale open panel — see `advanceToNextChunk`.)
 
 ### Cross-device flow
 - Save on desktop → switch to phone → open library → pull-down to refresh

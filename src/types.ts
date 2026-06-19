@@ -214,15 +214,13 @@ export interface Settings {
   // (English-identical words and proper names don't count; each digit of a
   // numeric run counts as a separate word). Set true to always re-read.
   readonly reReadShortChunks: boolean;
-  // Which of the three reading flows is active this session. See ReadingMode.
-  // Replaces the former `listeningMode` boolean; legacy settings blobs with
-  // `listeningMode: true` are mapped to 'listening' on load (normalizeSettings).
-  // Seeded from `defaultReadingMode` on each fresh sign-in; per-session changes
-  // (the in-reading mode picker) stay in memory and don't change the default.
+  // Which of the four reading flows is active. See ReadingMode. Sticky: persisted
+  // in the settings blob and synced across devices, so the last mode the user
+  // picked carries over to the next session on any device (not reseeded on
+  // sign-in). Replaces the former `listeningMode` boolean; legacy settings blobs
+  // with `listeningMode: true` are mapped to 'listening' on load
+  // (normalizeSettings).
   readonly readingMode: ReadingMode;
-  // The mode a fresh sign-in starts in, per user (DPD and ARD differ). Persisted;
-  // changing it does NOT change the current session's `readingMode`.
-  readonly defaultReadingMode: ReadingMode;
   // 'reading' mode only. When true (default), pressing Continue plays the chunk's
   // Spanish audio once and advances when it ends; when false, Continue advances
   // immediately with no audio. Ignored by the other three modes.

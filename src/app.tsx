@@ -191,7 +191,6 @@ export type AppAction =
   | { readonly kind: 'toggle-re-read-alternates' }
   | { readonly kind: 'toggle-re-read-short-chunks' }
   | { readonly kind: 'set-reading-mode'; readonly mode: ReadingMode }
-  | { readonly kind: 'set-default-reading-mode'; readonly mode: ReadingMode }
   | { readonly kind: 'toggle-read-aloud-on-advance' }
   // Light mode: reveal the English gloss for the current chunk. English is gated
   // behind this deliberate action; advancing still requires a Continue tap.
@@ -359,6 +358,11 @@ function advanceToNextChunk(state: AppState): AppState {
       // In light mode this is what lets Continue clear a pause left behind by
       // a dismissed word lookup, so the next chunk's Spanish actually plays.
       isPaused: false,
+      // Advancing dismisses any open lookup/grammar panel — it belongs to the
+      // chunk we're leaving, so it'd be stale on the next one. This is also what
+      // lets reading mode's in-panel Continue close the panel as it advances.
+      wordLookup: null,
+      grammarPanel: null,
     },
   };
 }
@@ -367,18 +371,12 @@ function reducer(state: AppState, action: AppAction): AppState {
   switch (action.kind) {
     case 'library-loaded': {
       const hasPassages = Object.keys(action.learner.passages).length > 0;
-      // A fresh sign-in starts in the user's chosen default mode. Their
-      // per-session mode changes from a prior session (persisted in readingMode)
-      // don't carry over. Seeding here, not in the loader, keeps it pure.
-      const learner: LearnerState = {
-        ...action.learner,
-        settings: {
-          ...action.learner.settings,
-          readingMode: action.learner.settings.defaultReadingMode,
-        },
-      };
+      // readingMode is sticky: the last mode the user picked is persisted in the
+      // settings blob and synced across devices, so we use it as-loaded — sign-in
+      // no longer reseeds it. (Falls back to defaultSettings()'s 'scaffolded' for
+      // accounts that never picked one.)
       return {
-        learner,
+        learner: action.learner,
         ui: {
           ...state.ui,
           view: hasPassages ? 'library' : 'paste',
@@ -788,17 +786,11 @@ function reducer(state: AppState, action: AppAction): AppState {
       };
 
     case 'set-reading-mode':
+      // Sticky: persisted in the settings blob and synced across devices, and no
+      // longer reseeded on sign-in (see 'library-loaded').
       return {
         ...state,
         learner: updateSettings(state.learner, { readingMode: action.mode }),
-      };
-
-    case 'set-default-reading-mode':
-      // Changes only the sign-in default; the current session's readingMode is
-      // deliberately left as-is.
-      return {
-        ...state,
-        learner: updateSettings(state.learner, { defaultReadingMode: action.mode }),
       };
 
     case 'toggle-read-aloud-on-advance':
@@ -829,7 +821,8 @@ function reducer(state: AppState, action: AppAction): AppState {
       if (state.learner.settings.readAloudOnAdvance) {
         // Enter SPEAKING: text stays visible, English hidden, Spanish audio
         // plays once (the speech effect fires on readingSpeaking) then advances.
-        // Clear isPaused so a dismissed-lookup pause can't block the audio.
+        // Clear isPaused so a dismissed-lookup pause can't block the audio, and
+        // close any open lookup/grammar panel (Continue tapped from inside it).
         return {
           ...state,
           ui: {
@@ -837,6 +830,8 @@ function reducer(state: AppState, action: AppAction): AppState {
             englishRevealed: false,
             readingSpeaking: true,
             isPaused: false,
+            wordLookup: null,
+            grammarPanel: null,
           },
         };
       }
