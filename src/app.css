@@ -1544,6 +1544,17 @@ button.ghost {
   .sentences.lookup-open {
     padding-bottom: 55vh;
   }
+  /* When a definition sheet is open, the tapped word is scrolled to
+     block:'start'. This margin drops it into a band ~20% down from the top of
+     the scroller — clear of the reading header above and well clear of the
+     ≤60dvh sheet below — so the word AND its definition are visible at once,
+     with a couple of lines of its own sentence still showing above it for
+     context. (The sheet is position:fixed, so scrollIntoView can't 'see' it;
+     this margin is how we reserve the space manually.) */
+  .sentences.lookup-open .word-clickable {
+    scroll-margin-top: 20vh;
+    scroll-margin-top: 20dvh;
+  }
   /* Larger tap zone for the grammar button on phones. */
   .grammar-button {
     min-width: 44px;

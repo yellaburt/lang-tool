@@ -1961,6 +1961,12 @@ export function ReadingView({ state, dispatch }: ViewProps) {
       : spanishTtsDone;
 
   const sentencesRef = useRef<HTMLOListElement | null>(null);
+  // The exact word button the reader last tapped to look up. On mobile the
+  // definition sheet is fixed to the bottom, so scrollIntoView can't detect
+  // that the sheet occludes the word — we scroll THIS element to a known-safe
+  // band above the sheet (see WordLookupPanel) so the tapped word stays visible
+  // alongside its definition.
+  const lookupWordRef = useRef<HTMLElement | null>(null);
   // Fade-out state for the active row, just before auto-advance. The `<ol>`
   // gets inline --fade-duration-ms so CSS transitions match the timer.
   const [isFading, setIsFading] = useState(false);
@@ -2024,11 +2030,17 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     scrollActiveIntoView('nearest');
   }, [currentChunkIndex, spanishTtsDone, scrollActiveIntoView]);
 
-  // Deliberate re-orientation: re-center the active row right after the reader
-  // resumes, OR after a word-lookup / grammar panel closes — including a close
-  // while still paused, so the text returns to its reading position and clears
-  // the fixed "Paused" pill instead of staying where the lookup scrolled it.
-  // Refs detect the resume/close transitions so we DON'T re-center on the
+  // Re-orientation after a transition. Two cases, tuned differently so the
+  // view doesn't lurch more than it has to:
+  //   - Resume: a deliberate 'center' re-orientation the reader asked for by
+  //     hitting play, so the active line lands mid-screen and the fixed
+  //     "Paused" pill's position is cleared.
+  //   - Panel close: only 'nearest'. If the active line is already visible
+  //     (the common case — the reader tapped a word in the current sentence)
+  //     nothing moves; it only scrolls when the line is genuinely off-screen
+  //     (e.g. after looking up a word far up the passage). This stops the
+  //     jarring full re-center that used to fire on every definition close.
+  // Refs detect the resume/close transitions so we DON'T scroll on the
   // opposite events (pausing, or opening a panel — which scrolls itself).
   const wasPausedRef = useRef(isPaused);
   const hadPanelOpenRef = useRef(false);
@@ -2038,8 +2050,10 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     const justClosedPanel = hadPanelOpenRef.current && !panelOpen;
     wasPausedRef.current = isPaused;
     hadPanelOpenRef.current = panelOpen;
-    if (justResumed || justClosedPanel) {
+    if (justResumed) {
       scrollActiveIntoView('center');
+    } else if (justClosedPanel) {
+      scrollActiveIntoView('nearest');
     }
   }, [isPaused, state.ui.wordLookup, state.ui.grammarPanel, scrollActiveIntoView]);
 
@@ -2530,6 +2544,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
               }
               showCurrentGloss={showCurrentGloss}
               textMode={textMode}
+              lookupWordRef={lookupWordRef}
               dispatch={dispatch}
             />
           ))}
@@ -2742,6 +2757,9 @@ interface SentenceItemProps {
   // Reading mode only: surfaces a Continue button inside the lookup/grammar
   // panels so the reader can advance straight from an open definition.
   readonly textMode: boolean;
+  // Set to the word button the reader taps; the lookup panel scrolls it above
+  // the mobile bottom sheet so the word stays visible with its definition.
+  readonly lookupWordRef: { current: HTMLElement | null };
   readonly dispatch: (a: AppAction) => void;
 }
 
@@ -2755,6 +2773,7 @@ function SentenceItem({
   hideCurrentChunkText,
   showCurrentGloss,
   textMode,
+  lookupWordRef,
   dispatch,
 }: SentenceItemProps) {
   const hasCurrent = sentence.some((c) => c.index === currentChunkIndex);
@@ -2782,7 +2801,12 @@ function SentenceItem({
           {sentence.map((c, i) => (
             <span key={c.id}>
               {i > 0 && ' '}
-              <ClickableSpanish text={c.tlText} chunkId={c.id} dispatch={dispatch} />
+              <ClickableSpanish
+                text={c.tlText}
+                chunkId={c.id}
+                lookupWordRef={lookupWordRef}
+                dispatch={dispatch}
+              />
             </span>
           ))}
         </div>
@@ -2791,6 +2815,7 @@ function SentenceItem({
           <WordLookupPanel
             lookup={wordLookup}
             textMode={textMode}
+            lookupWordRef={lookupWordRef}
             dispatch={dispatch}
           />
         )}
@@ -2840,6 +2865,7 @@ function SentenceItem({
                     <ClickableSpanish
                       text={c.tlText}
                       chunkId={c.id}
+                      lookupWordRef={lookupWordRef}
                       dispatch={dispatch}
                     />
                     <button
@@ -2868,6 +2894,7 @@ function SentenceItem({
         <WordLookupPanel
           lookup={wordLookup}
           textMode={textMode}
+          lookupWordRef={lookupWordRef}
           dispatch={dispatch}
         />
       )}
@@ -3215,10 +3242,12 @@ function tokenizeSpanish(text: string): Array<{ text: string; isWord: boolean }>
 function ClickableSpanish({
   text,
   chunkId,
+  lookupWordRef,
   dispatch,
 }: {
   text: string;
   chunkId: ChunkId;
+  lookupWordRef: { current: HTMLElement | null };
   dispatch: (a: AppAction) => void;
 }) {
   const tokens = useMemo(() => tokenizeSpanish(text), [text]);
@@ -3232,6 +3261,10 @@ function ClickableSpanish({
             className="word-clickable"
             onClick={(e) => {
               e.stopPropagation();
+              // Record the tapped word BEFORE blur so the lookup sheet can
+              // scroll it above the bottom sheet. blur() only drops focus; the
+              // element reference stays valid across the re-render (same key).
+              lookupWordRef.current = e.currentTarget;
               e.currentTarget.blur();
               dispatch({ kind: 'lookup-word', word: t.text, chunkId });
             }}
@@ -3249,29 +3282,35 @@ function ClickableSpanish({
 function WordLookupPanel({
   lookup,
   textMode,
+  lookupWordRef,
   dispatch,
 }: {
   lookup: WordLookupUiState;
   textMode: boolean;
+  lookupWordRef: { current: HTMLElement | null };
   dispatch: (a: AppAction) => void;
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
-  // Scroll the panel into view on first appearance and again when it
-  // transitions from loading → ready (since the panel grows then). 'nearest'
-  // does the minimum scroll required, so it won't yank the page if the
-  // panel is already visible. On mobile the panel is a fixed bottom sheet,
-  // so scrolling the panel itself does nothing — instead, scroll the parent
-  // sentence above the sheet so the looked-up word stays visible.
+  // Scroll into view on first appearance and again when it transitions from
+  // loading → ready (the panel grows then).
+  //   Desktop: 'nearest' on the panel — minimum scroll, no yank if visible.
+  //   Mobile: the panel is a fixed bottom sheet, so scrolling it does nothing.
+  //     Scroll the exact tapped WORD to a fixed band above the sheet (via its
+  //     scroll-margin-top, set in CSS) so the word stays visible next to its
+  //     definition even when its sentence is taller than the space above the
+  //     sheet. Fall back to the parent sentence if we somehow have no word ref.
   useEffect(() => {
     if (window.matchMedia('(min-width: 641px)').matches) {
       panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } else if (lookupWordRef.current) {
+      lookupWordRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } else {
       panelRef.current?.parentElement?.scrollIntoView({
         behavior: 'smooth',
         block: 'start',
       });
     }
-  }, [lookup.kind]);
+  }, [lookup.kind, lookupWordRef]);
   return (
     <>
       <div className="word-lookup-backdrop" aria-hidden="true" />
