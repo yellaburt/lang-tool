@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="es" data-theme="white" data-emphasis="color">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Subjunctive highlighting — theme preview</title>
+
+    <!-- The live stylesheet, by absolute path. Edit src/app.css and just
+         refresh this page; there is no build step in between. -->
+    <link rel="stylesheet" href="/src/app.css" />
+
+    <style>
+      /* Harness chrome only. Deliberately namespaced under .harness-* so it
+         can never leak into or mask the rules being previewed. */
+      .harness-bar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem 1.4rem;
+        align-items: center;
+        padding: 0.7rem 1.25rem;
+        background: var(--surface-soft);
+        border-bottom: 1px solid var(--surface-border);
+        font: 13px/1.4 system-ui, sans-serif;
+        color: var(--text-primary);
+      }
+      .harness-group {
+        display: flex;
+        gap: 0.3rem;
+        align-items: center;
+      }
+      .harness-group > b {
+        font-weight: 600;
+        color: var(--text-secondary);
+        margin-right: 0.2rem;
+      }
+      .harness-bar button {
+        font: inherit;
+        padding: 0.25rem 0.55rem;
+        border: 1px solid var(--surface-border);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--text-primary);
+        cursor: pointer;
+      }
+      .harness-bar button[aria-pressed='true'] {
+        background: var(--button-bg);
+        color: var(--button-fg);
+        border-color: var(--button-bg);
+      }
+      .harness-note {
+        margin: 0 0 0.9rem;
+        font: 13px/1.5 system-ui, sans-serif;
+        color: var(--text-secondary);
+      }
+      .harness-note code {
+        background: var(--code-bg);
+        padding: 0 0.25rem;
+        border-radius: 3px;
+      }
+      .harness-section {
+        margin: 0 0 2.2rem;
+      }
+      .harness-section > h2 {
+        font: 600 13px/1.4 system-ui, sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--text-secondary);
+        margin: 0 0 0.15rem;
+      }
+      .harness-flag {
+        border-left: 3px solid #c44;
+        padding-left: 0.6rem;
+      }
+      .harness-swatches {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        font-size: 1.15rem;
+        line-height: 1.7;
+      }
+      .harness-swatches > span {
+        border: 1px dashed var(--surface-divider);
+        padding: 0.15rem 0.3rem;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="harness-bar">
+      <div class="harness-group" id="themes"><b>theme</b></div>
+      <div class="harness-group" id="emphasis"><b>emphasis</b></div>
+      <div class="harness-group" id="gate"><b>highlight</b></div>
+      <div class="harness-group"><b>keys</b> 1–6 theme · 0 highlight on/off</div>
+    </div>
+
+    <div class="container">
+      <h1>Subjunctive highlighting</h1>
+      <p class="harness-note">
+        Live <code>src/app.css</code>, real DOM structure. Hues come from the
+        same <code>MOOD_HUES</code> table and the same
+        <code>(pairId - 1) % 4</code> formula as <code>views.tsx</code>, so
+        pair 1 is teal. Muted = mood trigger, saturated = subjunctive verb.
+        Words are real <code>&lt;button class="word-clickable"&gt;</code>
+        elements, so hover and tap feedback are testable here too.
+      </p>
+
+      <!-- ============================================================
+           A. The four hue pairs on a plain (non-emphasized) chunk.
+           ============================================================ -->
+      <div class="harness-section">
+        <h2>1 · Four hue pairs, current chunk, no emphasis band</h2>
+        <p class="harness-note">
+          Each line is one pair. Can you spot the verb without reading for it?
+        </p>
+        <ul class="sentences">
+          <li class="sentence current">
+            <div class="pairs">
+              <div class="pair-row current">
+                <div class="pair-tl" data-tl>
+                  <b data-pair="1" data-role="trigger">Quiero que</b>
+                  <w>hoy</w> <b data-pair="1" data-role="verb">hables</b>
+                  <w>con</w> <w>ella</w><x>.</x>
+                </div>
+                <div class="pair-en">I want you to talk to her today.</div>
+              </div>
+              <div class="pair-row current">
+                <div class="pair-tl" data-tl>
+                  <b data-pair="2" data-role="trigger">Dudo que</b>
+                  <w>mi</w> <w>hermano</w>
+                  <b data-pair="2" data-role="verb">coma</b> <w>carne</w><x>.</x>
+                </div>
+                <div class="pair-en">I doubt my brother eats meat.</div>
+              </div>
+              <div class="pair-row current">
+                <div class="pair-tl" data-tl>
+                  <w>Te</w> <w>lo</w> <w>digo</w>
+                  <b data-pair="3" data-role="trigger">para que</b>
+                  <b data-pair="3" data-role="verb">sepas</b> <w>la</w>
+                  <w>verdad</w><x>.</x>
+                </div>
+                <div class="pair-en">I'm telling you so that you know the truth.</div>
+              </div>
+              <div class="pair-row current">
+                <div class="pair-tl" data-tl>
+                  <b data-pair="4" data-role="trigger">Es posible que</b>
+                  <w>ya</w> <b data-pair="4" data-role="verb">haya llamado</b><x>.</x>
+                </div>
+                <div class="pair-en">It's possible he has already called.</div>
+              </div>
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <!-- ============================================================
+           B. THE COLLISION CASE.
+           ============================================================ -->
+      <div class="harness-section harness-flag">
+        <h2>2 · On the active emphasis band — the weak case</h2>
+        <p class="harness-note">
+          The active chunk paints its whole cell with
+          <code>--highlight-bg</code> (yellow). The tint is alpha-composited
+          over that, so it loses contrast. The first row below is active, the
+          second is the same content unemphasized, for direct comparison —
+          row 1 should read close to row 2. <b>This is what killed amber:</b>
+          at hue 38 the trigger vanished into the band entirely, which is why
+          <code>MOOD_HUES</code> now starts at teal. Check any new hue here
+          before trusting it. Switch emphasis to <code>bold</code> or
+          <code>none</code> to see the band disappear.
+        </p>
+        <ul class="sentences">
+          <li class="sentence current">
+            <div class="pairs">
+              <div class="pair-row current tl-active">
+                <div class="pair-tl" data-tl>
+                  <b data-pair="1" data-role="trigger">Quiero que</b>
+                  <w>hoy</w> <b data-pair="1" data-role="verb">hables</b>
+                  <w>con</w> <w>ella</w><x>,</x> <w>aunque</w>
+                  <b data-pair="2" data-role="verb">sea</b> <w>tarde</w><x>.</x>
+                </div>
+                <div class="pair-en">I want you to talk to her today, even if it's late.</div>
+              </div>
+              <div class="pair-row current">
+                <div class="pair-tl" data-tl>
+                  <b data-pair="1" data-role="trigger">Quiero que</b>
+                  <w>hoy</w> <b data-pair="1" data-role="verb">hables</b>
+                  <w>con</w> <w>ella</w><x>,</x> <w>aunque</w>
+                  <b data-pair="2" data-role="verb">sea</b> <w>tarde</w><x>.</x>
+                </div>
+                <div class="pair-en">(same chunk, no emphasis band)</div>
+              </div>
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <!-- ============================================================
+           C. Past sentence — dimmed via color only.
+           ============================================================ -->
+      <div class="harness-section">
+        <h2>3 · Past sentence (dimmed text, flowing paragraph)</h2>
+        <p class="harness-note">
+          Past sentences dim via <code>color</code>, never parent
+          <code>opacity</code>, so the tint keeps its full strength while the
+          text recedes. Check the tint doesn't now shout louder than the words.
+        </p>
+        <ul class="sentences">
+          <li class="sentence past">
+            <div class="tl" data-tl>
+              <w>No</w> <w>creo</w> <w>que</w>
+              <b data-pair="1" data-role="verb">llames</b>
+              <b data-pair="2" data-role="trigger">antes de que</b> <w>él</w>
+              <b data-pair="2" data-role="verb">llegue</b><x>.</x>
+              <w>Es</w> <w>mejor</w>
+              <b data-pair="3" data-role="trigger">que</b>
+              <b data-pair="3" data-role="verb">esperes</b> <w>aquí</w><x>.</x>
+            </div>
+            <div class="en">
+              I don't think you'll call before he arrives. It's better that you
+              wait here.
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <!-- ============================================================
+           D. Edge cases from the spec.
+           ============================================================ -->
+      <div class="harness-section">
+        <h2>4 · Edge cases</h2>
+        <p class="harness-note">
+          A verb with no trigger (independent use), a trigger licensing two
+          verbs (shared hue), and an unhighlighted <code>cuando</code> +
+          indicative for contrast — the two-mood case where nothing should be
+          tagged at all.
+        </p>
+        <ul class="sentences">
+          <li class="sentence current">
+            <div class="pairs">
+              <div class="pair-row current">
+                <div class="pair-tl" data-tl>
+                  <x>¡</x><w>Que</w> <w>te</w>
+                  <b data-pair="1" data-role="verb">vaya</b> <w>bien</w><x>!</x>
+                </div>
+                <div class="pair-en">Have a good one! <i>(verb, no trigger)</i></div>
+              </div>
+              <div class="pair-row current">
+                <div class="pair-tl" data-tl>
+                  <b data-pair="2" data-role="trigger">Espero que</b>
+                  <b data-pair="2" data-role="verb">comas</b> <w>y</w>
+                  <b data-pair="2" data-role="verb">descanses</b><x>.</x>
+                </div>
+                <div class="pair-en">I hope you eat and rest. <i>(one trigger, two verbs)</i></div>
+              </div>
+              <div class="pair-row current">
+                <div class="pair-tl" data-tl>
+                  <w>Cuando</w> <w>llegó</w><x>,</x> <w>ya</w> <w>no</w>
+                  <w>estaba</w><x>.</x>
+                </div>
+                <div class="pair-en">When he arrived, she was gone. <i>(indicative — nothing tagged)</i></div>
+              </div>
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <!-- ============================================================
+           E. Bare swatches.
+           ============================================================ -->
+      <div class="harness-section">
+        <h2>5 · Bare swatches, trigger vs verb</h2>
+        <p class="harness-note">
+          Same word at both weights in all four hues. Trigger should read as
+          background, verb as foreground — if a trigger looks as loud as a
+          verb, lower <code>--mood-alpha-trigger</code>.
+        </p>
+        <div class="harness-swatches" data-tl>
+          <span><b data-pair="1" data-role="trigger">hables</b></span>
+          <span><b data-pair="1" data-role="verb">hables</b></span>
+          <span><b data-pair="2" data-role="trigger">hables</b></span>
+          <span><b data-pair="2" data-role="verb">hables</b></span>
+          <span><b data-pair="3" data-role="trigger">hables</b></span>
+          <span><b data-pair="3" data-role="verb">hables</b></span>
+          <span><b data-pair="4" data-role="trigger">hables</b></span>
+          <span><b data-pair="4" data-role="verb">hables</b></span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Kept deliberately in sync with views.tsx — if you change the palette
+      // or the index formula there, change it here too or this page lies.
+      const MOOD_HUES = [190, 280, 340, 150];
+      const moodHue = (pairId) => {
+        const n = MOOD_HUES.length;
+        return MOOD_HUES[(((pairId - 1) % n) + n) % n];
+      };
+
+      // Expand the shorthand authoring tags above into the real markup the app
+      // renders: <b> -> an annotated word button, <w> -> a plain word button,
+      // <x> -> the punctuation span between words. Writing the fixtures this
+      // way keeps them readable while the DOM under test stays faithful.
+      // (<x>/<w> rather than <p>/<span>: unknown tags parse as inline and
+      // carry no stylesheet rules of their own, so nothing shifts or flashes
+      // in the moment before this script swaps them out.)
+      for (const host of document.querySelectorAll('[data-tl]')) {
+        for (const el of [...host.querySelectorAll('b, w, x')]) {
+          const tag = el.tagName.toLowerCase();
+          let node;
+          if (tag === 'x') {
+            node = document.createElement('span');
+            node.textContent = el.textContent;
+          } else {
+            node = document.createElement('button');
+            node.type = 'button';
+            node.className = 'word-clickable';
+            node.textContent = el.textContent;
+            if (tag === 'b') {
+              const pairId = Number(el.dataset.pair);
+              node.classList.add(
+                el.dataset.role === 'trigger' ? 'mood-trigger' : 'mood-verb',
+              );
+              node.style.setProperty('--mood-hue', String(moodHue(pairId)));
+            }
+          }
+          el.replaceWith(node);
+        }
+      }
+
+      const root = document.documentElement;
+      const THEMES = ['white', 'cream', 'sepia', 'light-gray', 'dark', 'high-contrast'];
+      const EMPHASIS = ['color', 'both', 'bold', 'none'];
+
+      function buildGroup(hostId, values, apply, isOn) {
+        const host = document.getElementById(hostId);
+        const paint = () =>
+          host.querySelectorAll('button').forEach((b) =>
+            b.setAttribute('aria-pressed', String(isOn(b.dataset.value))),
+          );
+        for (const v of values) {
+          const b = document.createElement('button');
+          b.textContent = v;
+          b.dataset.value = v;
+          b.onclick = () => {
+            apply(v);
+            paint();
+          };
+          host.append(b);
+        }
+        paint();
+        return paint;
+      }
+
+      const paintTheme = buildGroup(
+        'themes',
+        THEMES,
+        (v) => root.setAttribute('data-theme', v),
+        (v) => root.getAttribute('data-theme') === v,
+      );
+      buildGroup(
+        'emphasis',
+        EMPHASIS,
+        (v) => root.setAttribute('data-emphasis', v),
+        (v) => root.getAttribute('data-emphasis') === v,
+      );
+      // The gate is on the NEGATIVE: absent attribute means ON, which is also
+      // what the real app shows before the settings blob loads.
+      const paintGate = buildGroup(
+        'gate',
+        ['on', 'off'],
+        (v) => root.setAttribute('data-highlight-subjunctive', v),
+        (v) => (root.getAttribute('data-highlight-subjunctive') ?? 'on') === v,
+      );
+
+      addEventListener('keydown', (e) => {
+        const i = Number(e.key);
+        if (i >= 1 && i <= THEMES.length) {
+          root.setAttribute('data-theme', THEMES[i - 1]);
+          paintTheme();
+        } else if (e.key === '0') {
+          const next =
+            (root.getAttribute('data-highlight-subjunctive') ?? 'on') === 'on'
+              ? 'off'
+              : 'on';
+          root.setAttribute('data-highlight-subjunctive', next);
+          paintGate();
+        }
+      });
+    </script>
+  </body>
+</html>
