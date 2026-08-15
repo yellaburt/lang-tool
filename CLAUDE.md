@@ -131,6 +131,26 @@ Home (jump to start).
   reach the now-hidden Continue bar. Grammar panel gets the same. (Advancing via
   any path now also clears a stale open panel — see `advanceToNextChunk`.)
 
+### Subjunctive highlighting
+- Subjunctive verb forms are given a coloured background tint in the Spanish
+  text, and the trigger that licenses them (*quiero que*, *para que*, *antes de
+  que*) gets a muted tint of the **same hue**, so the pair reads as connected
+  even across intervening clauses. Multiple pairs in a chunk cycle a four-hue
+  palette.
+- Purpose: Pete comprehends fine but doesn't *notice* subjunctive morphology,
+  especially regular stems (*hable*, *coma*) where mood is one vowel. The
+  highlight does the noticing; the existing `¶` grammar note does the
+  explaining. It's deliberately passive — no new tap target.
+- Applies in all four reading modes and both chunking modes.
+- **Settings → Appearance → "Highlight subjunctive verbs"**, default ON. Off is
+  also a self-test: can you spot them unaided?
+- Only passages processed under `PROMPT_VERSION` v5 or later have annotations.
+  Older passages render unhighlighted and are not backfilled — there's no
+  per-passage reprocess path.
+- See `task-subjunctive-highlighting.md` for the full design, and
+  `seed-subjunctive.md` for a test passage covering every form plus the
+  false-positive decoys.
+
 ### Cross-device flow
 - Save on desktop → switch to phone → open library → pull-down to refresh
   → the new passage shows up.
@@ -164,7 +184,13 @@ Home (jump to start).
 The `chunk-and-gloss` Edge Function:
 1. Receives 2 sentences of text + the user's auth.
 2. Tries **Haiku 4.5** first with a tool-use prompt that returns
-   `{ chunks: [{ tlText, englishGloss, sentenceIndex }] }`.
+   `{ chunks: [{ tlText, englishGloss, sentenceIndex, mood_annotations? }] }`.
+   `mood_annotations` drives subjunctive highlighting. The model returns a
+   verbatim `span` per annotation, **not** character offsets — LLMs are
+   unreliable at emitting offsets. The function resolves each span against
+   `tlText` with `indexOf` and **drops anything it can't locate**, so
+   annotations reach the client as `{start, end, role, pairId}`. False
+   negatives are cheap; false positives teach wrong grammar.
 3. If Haiku times out (20s), refuses (returns text instead of calling the
    tool), or returns malformed output → tries **Sonnet 4.5** (30s timeout).
 4. If both fail, runs a **diagnostic call** with a known-benign sentence
@@ -242,6 +268,15 @@ src/
   llm.ts        Thin legacy shim around callChunkAndGloss.
   app.css       All styles. CSS variables per theme.
 
+mood-preview.html   Standalone harness for the subjunctive-highlight CSS.
+                    npm run dev, then /mood-preview.html — links the live
+                    app.css, renders the real reading-view DOM across all
+                    hues/themes/emphasis states. Duplicates MOOD_HUES and
+                    the (pairId - 1) % 4 formula from views.tsx — change
+                    both together. Not a build entry; never ships.
+task-subjunctive-highlighting.md   Design + build log for that feature.
+seed-subjunctive.md                Test passage for verifying it.
+
 supabase/
   functions/chunk-and-gloss/   2-sentence chunking + Haiku→Sonnet
                                fallback + health-check diagnostic.
@@ -300,6 +335,32 @@ gets a Claude-generated replacement (one Edge Function call per
 passage). User can rename inline (✎) at any time, including before the
 auto-title arrives.
 
+### Subjunctive highlighting: four constraints that look arbitrary
+All four were arrived at by rendering it, not by reasoning about it. Use
+`mood-preview.html` before changing any of them.
+- **No amber or yellow in `MOOD_HUES`.** The active chunk's emphasis band *is*
+  yellow (`--highlight-bg`), and the tint is alpha-composited over it. At hue 38
+  the trigger vanished into the band completely. Every hue in the palette sits
+  far from yellow for that reason; check any new one on the band.
+- **The tint is a `background-image`, not a `background-color`.**
+  `.word-clickable`'s hover/active rules use the `background` *shorthand*, which
+  resets `background-image`. Keeping the tint on the image layer means it
+  survives a tap while the hover colour still shows through underneath.
+  "Simplifying" this to `background-color` silently kills tap feedback on
+  exactly the words most likely to be tapped.
+- **The CSS gate matches the negative** —
+  `html:not([data-highlight-subjunctive='off'])`, not `='on'`. Default is ON, so
+  matching the negative means highlights are correct on first paint, before the
+  settings blob loads.
+- **`MOOD_HUES` is indexed `(pairId - 1) % 4`.** pairIds start at 1; indexing by
+  `pairId % 4` sends the first pair to the second hue and makes the first hue
+  reachable only on a chunk's fourth pair, i.e. never.
+
+Highlighting is annotation-class-only on the existing word `<button>` — no
+wrapper element, no padding/border/font change — so tap-target geometry is
+untouched. The toggle is pure CSS off a root attribute, so it re-renders
+nothing.
+
 ### Folders are implicit
 No `folders` table. Each passage has `folder text` and `subfolder text`
 columns (both nullable). A folder "exists" iff some passage references
@@ -319,6 +380,15 @@ column"; it'd be wrong about the schema.
 ## Current problems
 
 ### Functional / UX gaps
+- **Subjunctive tagging is unproven on real text.** The known risk is a cheap
+  model over-tagging two-mood triggers (*cuando*, *aunque*, *quizás* +
+  indicative), which teaches wrong grammar rather than merely missing a form.
+  The prompt leans hard on omit-when-uncertain, but nothing verifies the output.
+  `seed-subjunctive.md` exists to exercise exactly these cases.
+- **No backfill for subjunctive annotations.** Passages processed before
+  `PROMPT_VERSION` v5 render unhighlighted forever; there's no per-passage
+  reprocess path. Adding one is a small follow-up (re-run stored `tlText`
+  through annotation).
 - **No undo for passage delete.** It's gone, and Supabase free tier has
   no point-in-time recovery.
 - **Lookup history is collected but never shown.** The infrastructure for
@@ -348,7 +418,10 @@ column"; it'd be wrong about the schema.
 - **The system prompt is duplicated.** `src/prompt.ts` and
   `supabase/functions/chunk-and-gloss/index.ts` both define
   `SYSTEM_PROMPT`, `TOOL_*`, and the validator. Manual sync; will drift.
-  Worth a build-time injection step when there's downtime.
+  Worth a build-time injection step when there's downtime. Subjunctive
+  highlighting made this worse: the mood-annotation instructions, the
+  `mood_annotations` schema, and `resolveMoodAnnotations()` are now duplicated
+  too, so a prompt change touches ~60 lines in two files.
 - **Edge Function timeouts use `Promise.race`.** The underlying HTTP
   request keeps running after the local timeout fires — it doesn't block
   the function, but it still counts against Anthropic spend until it
