@@ -18,6 +18,7 @@ import {
   Chunk,
   ChunkId,
   EmphasisStyle,
+  MoodAnnotation,
   Passage,
   Settings,
   ThemeName,
@@ -2804,6 +2805,7 @@ function SentenceItem({
               <ClickableSpanish
                 text={c.tlText}
                 chunkId={c.id}
+                moodAnnotations={c.moodAnnotations}
                 lookupWordRef={lookupWordRef}
                 dispatch={dispatch}
               />
@@ -2865,6 +2867,7 @@ function SentenceItem({
                     <ClickableSpanish
                       text={c.tlText}
                       chunkId={c.id}
+                      moodAnnotations={c.moodAnnotations}
                       lookupWordRef={lookupWordRef}
                       dispatch={dispatch}
                     />
@@ -3227,38 +3230,81 @@ function useAvailableVoices(): VoicesState {
 // Tokenize a Spanish chunk into alternating word/non-word segments. Words
 // are letters (including accented Spanish letters + ñ); non-word segments
 // are punctuation/whitespace. We preserve everything so re-joining is
-// lossless and visual flow is unchanged.
-function tokenizeSpanish(text: string): Array<{ text: string; isWord: boolean }> {
-  const tokens: Array<{ text: string; isWord: boolean }> = [];
+// lossless and visual flow is unchanged. Each token also carries its char
+// range within `text` so mood annotations — resolved to tlText offsets
+// server-side — can be intersected with word tokens.
+interface SpanishToken {
+  readonly text: string;
+  readonly isWord: boolean;
+  readonly start: number;
+  readonly end: number;
+}
+
+function tokenizeSpanish(text: string): SpanishToken[] {
+  const tokens: SpanishToken[] = [];
   const re = /([A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+)|([^A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
-    if (m[1] !== undefined) tokens.push({ text: m[1], isWord: true });
-    else if (m[2] !== undefined) tokens.push({ text: m[2], isWord: false });
+    const seg = m[1] ?? m[2];
+    if (seg === undefined) continue;
+    tokens.push({
+      text: seg,
+      isWord: m[1] !== undefined,
+      start: m.index,
+      end: m.index + seg.length,
+    });
   }
   return tokens;
+}
+
+// Hue angles cycled by pairId, so a trigger and the verb it licenses share a
+// hue family while neighbouring pairs stay tellable apart. Amber leads — the
+// spec's default pairing. The CSS derives both the muted trigger tint and the
+// saturated verb tint from this one angle.
+const MOOD_HUES: ReadonlyArray<number> = [38, 190, 280, 340];
+
+function moodHue(pairId: number): number {
+  const n = MOOD_HUES.length;
+  return MOOD_HUES[((pairId % n) + n) % n]!;
 }
 
 function ClickableSpanish({
   text,
   chunkId,
+  moodAnnotations,
   lookupWordRef,
   dispatch,
 }: {
   text: string;
   chunkId: ChunkId;
+  // `| undefined` is required by exactOptionalPropertyTypes: the chunk field
+  // is optional, so call sites pass an explicit undefined for unannotated
+  // chunks (old passages, or chunks with no subjunctive forms).
+  moodAnnotations?: ReadonlyArray<MoodAnnotation> | undefined;
   lookupWordRef: { current: HTMLElement | null };
   dispatch: (a: AppAction) => void;
 }) {
   const tokens = useMemo(() => tokenizeSpanish(text), [text]);
   return (
     <>
-      {tokens.map((t, i) =>
-        t.isWord ? (
+      {tokens.map((t, i) => {
+        if (!t.isWord) return <span key={i}>{t.text}</span>;
+        // Mood highlighting is className-only — no wrapper element — so the
+        // tap <button> and its geometry are untouched. Annotations are always
+        // rendered; the per-user toggle is a CSS gate on a root attribute.
+        // First intersecting annotation wins (overlaps are rare).
+        const mood = moodAnnotations?.find((a) => t.start < a.end && a.start < t.end);
+        return (
           <button
             key={i}
             type="button"
-            className="word-clickable"
+            className={
+              'word-clickable' +
+              (mood ? (mood.role === 'trigger' ? ' mood-trigger' : ' mood-verb') : '')
+            }
+            style={
+              mood ? ({ '--mood-hue': `${moodHue(mood.pairId)}` } as CSSProperties) : undefined
+            }
             onClick={(e) => {
               e.stopPropagation();
               // Record the tapped word BEFORE blur so the lookup sheet can
@@ -3271,10 +3317,8 @@ function ClickableSpanish({
           >
             {t.text}
           </button>
-        ) : (
-          <span key={i}>{t.text}</span>
-        ),
-      )}
+        );
+      })}
     </>
   );
 }

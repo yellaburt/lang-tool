@@ -1,10 +1,12 @@
 # Task: Subjunctive highlighting (input enhancement)
 
 **Status:** In progress. Steps 1–3 (types, prompt/schema, span→offset resolution)
-are done and merged — annotations are produced, resolved, delivered, and stored on
-chunks; nothing renders yet. Steps 4–6 (render, styles, toggle) are scoped in detail
-below. Plan reconciled against the actual codebase 2026-08-15 — see "Scoping
-corrections" for where the original spec's assumptions didn't match the code.
+are committed; step 4 (render) is committed too — annotated word tokens now carry
+`mood-trigger` / `mood-verb` classes and a `--mood-hue`, but **`app.css` has no
+rules for them yet, so nothing is visible until step 5**. Steps 5–6 (styles,
+toggle) are scoped in detail below. Plan reconciled against the actual codebase
+2026-08-15 — see "Scoping corrections" for where the original spec's assumptions
+didn't match the code.
 
 **Goal:** Visually mark subjunctive verb forms and their mood triggers in passage text, so the reader notices subjunctive morphology that "good-enough" comprehension otherwise skips over. This is textual input enhancement targeted at a form (regular-stem subjunctive, where mood is marked by a single theme-vowel swap) that skilled readers demonstrably fail to notice.
 
@@ -158,8 +160,8 @@ resolve/validate the spans. Bump `PROMPT_VERSION` → `v5` in both copies.
 | 1 | Types: `MoodAnnotation` + optional `moodAnnotations?` on `Chunk` | `types.ts` | 15 min | ✅ done |
 | 2 | Prompt + tool schema (both copies), bump `PROMPT_VERSION`→`v5` | `prompt.ts`, `chunk-and-gloss/index.ts` | 1.5–2.5 hr | ✅ done |
 | 3 | Resolve `span`→char range + validate/drop; carry through to `Chunk` (both prose + lyrics paths) | `prompt.ts`, `chunk-and-gloss/index.ts`, `app.tsx`, `prompt.test.ts` | 1–1.5 hr | ✅ done |
-| 4 | Render: thread offsets through tokenizer, apply hue classes | `views.tsx` (`tokenizeSpanish`, `ClickableSpanish`) | 1.5–2.5 hr | ⬜ next |
-| 5 | Styles: trigger/verb tints keyed on `--mood-hue`, per theme | `app.css` | 1.5–3 hr | ⬜ |
+| 4 | Render: thread offsets through tokenizer, apply hue classes | `views.tsx` (`tokenizeSpanish`, `ClickableSpanish`) | 1.5–2.5 hr | ✅ done |
+| 5 | Styles: trigger/verb tints keyed on `--mood-hue`, per theme | `app.css` | 1.5–3 hr | ⬜ next |
 | 6 | Setting (`highlightSubjunctive`, default ON) + toggle + CSS gate | `types.ts`, `core.ts`, `app.tsx`, `views.tsx` | 1–1.5 hr | ⬜ |
 | 7 | Manual verification (seed passages, mobile tap, toggle, themes) | seed/manual | 1–1.5 hr | ⬜ |
 
@@ -205,6 +207,14 @@ Two conventions:
   `moodAnnotations={c.moodAnnotations}` at both call sites (past sentence ~2804,
   current sentence ~2865). Import `MoodAnnotation`. First intersecting annotation
   wins if two overlap (rare).
+
+**Step 4 as built:** `tokenizeSpanish` now returns `{text, isWord, start, end}`
+(offsets from `RegExpExecArray.index`). `ClickableSpanish` takes an optional
+`moodAnnotations` prop — typed `| undefined` explicitly, since
+`exactOptionalPropertyTypes` is on and the call sites pass `c.moodAnnotations`
+straight through. Hue comes from `MOOD_HUES = [38, 190, 280, 340]` indexed by
+`pairId`; `--mood-hue` is set inline as a **bare hue angle** (e.g. `38`), so
+step 5's CSS reads it as `hsl(var(--mood-hue) …)`.
 
 ### Step 5 — styles (`app.css`)
 
