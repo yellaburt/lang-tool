@@ -161,7 +161,7 @@ resolve/validate the spans. Bump `PROMPT_VERSION` → `v5` in both copies.
 | 2 | Prompt + tool schema (both copies), bump `PROMPT_VERSION`→`v5` | `prompt.ts`, `chunk-and-gloss/index.ts` | 1.5–2.5 hr | ✅ done |
 | 3 | Resolve `span`→char range + validate/drop; carry through to `Chunk` (both prose + lyrics paths) | `prompt.ts`, `chunk-and-gloss/index.ts`, `app.tsx`, `prompt.test.ts` | 1–1.5 hr | ✅ done |
 | 4 | Render: thread offsets through tokenizer, apply hue classes | `views.tsx` (`tokenizeSpanish`, `ClickableSpanish`) | 1.5–2.5 hr | ✅ done |
-| 5 | Styles: trigger/verb tints keyed on `--mood-hue`, per theme | `app.css` | 1.5–3 hr | ✅ done (needs eyeball) |
+| 5 | Styles: trigger/verb tints keyed on `--mood-hue`, per theme | `app.css` | 1.5–3 hr | ✅ done, verified in all 6 themes |
 | 6 | Setting (`highlightSubjunctive`, default ON) + toggle + CSS gate | `types.ts`, `core.ts`, `app.tsx`, `views.tsx` | 1–1.5 hr | ⬜ next |
 | 7 | Manual verification (seed passages, mobile tap, toggle, themes) | seed/manual | 1–1.5 hr | ⬜ |
 
@@ -231,11 +231,13 @@ step 5's CSS reads it as `hsl(var(--mood-hue) …)`.
    tint composes cleanly."** It does not. `[data-emphasis='color'|'both']` paints
    the whole `.pair-tl` cell with `--highlight-bg` — a yellow band (`#fff59d`
    white, `#ffff00` high-contrast). An alpha tint over yellow loses most of its
-   contrast, worst case the amber pair (hue 38) on the yellow band. Mitigated by
-   lifting both alphas and darkening `--mood-light` while that band is up. **This
-   is the specific thing to eyeball first.** If it still reads badly the levers
-   are: drop 38 from `MOOD_HUES`, or give the verb the underline treatment that
-   high-contrast gets.
+   contrast. Mitigated by lifting both alphas and darkening `--mood-light` while
+   that band is up — **and by dropping amber from the palette entirely.** At hue
+   38 the trigger was invisible on the band and the verb was a faint olive
+   smudge, while teal on the same band read cleanly. `MOOD_HUES` is now
+   `[190, 280, 340, 150]` (teal, violet, rose, green): no hue near yellow. The
+   spec's "e.g. soft amber" was illustrative, and it is the one color this
+   feature cannot use.
 2. **`.word-clickable`'s hover/active use the `background` SHORTHAND**, which
    resets `background-image`. So the tint is painted as a `background-image`
    (`linear-gradient(var(--mood-tint), var(--mood-tint))`) and the gated rules
@@ -248,6 +250,17 @@ not `='on'` as this section originally said. Default is ON, and gating this way
 means highlights don't flash off on first paint before the settings blob loads,
 and step 5 is verifiable before step 6 exists. Step 6 only has to write the
 attribute.
+
+**Preview harness:** `mood-preview.html` at the repo root (untracked). Run
+`npm run dev` and open `http://localhost:5173/mood-preview.html` — it links the
+live `src/app.css`, so edit and refresh with no build step. Renders the real
+DOM (`.pair-row.current.tl-active .pair-tl` etc., real `.word-clickable`
+buttons) across all four hues, both roles, the emphasis band, past-sentence
+dimming and the spec's edge cases, with theme / emphasis / on-off switchers
+(keys 1–6 and 0). It duplicates `MOOD_HUES` and the `(pairId - 1) % 4` formula
+from `views.tsx` — **change both together or the page lies.** This is what
+caught the amber problem; use it for step 7 rather than hunting for a passage
+containing the right forms.
 
 Tuning knobs are four inherited vars (`--mood-sat`, `--mood-light`,
 `--mood-alpha-trigger`, `--mood-alpha-verb`) with per-theme overrides for

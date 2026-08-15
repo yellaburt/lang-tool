@@ -1334,8 +1334,8 @@ button.ghost {
   --mood-alpha-verb: 0.36;
 }
 
-/* Warm grounds (cream/sepia) swallow the amber end of the palette — the tint
-   is closer to the page color there than on white, so both alphas come up. */
+/* Warm grounds (cream/sepia) sit closer to the tint than white does, so both
+   alphas come up to keep the same separation from the page. */
 [data-theme='cream'],
 [data-theme='sepia'] {
   --mood-light: 44%;
@@ -1364,13 +1364,13 @@ button.ghost {
    would drop the whole background-image and the word would render untinted. */
 .mood-trigger {
   --mood-tint: hsl(
-    var(--mood-hue, 38) var(--mood-sat) var(--mood-light) / var(--mood-alpha-trigger)
+    var(--mood-hue, 190) var(--mood-sat) var(--mood-light) / var(--mood-alpha-trigger)
   );
 }
 
 .mood-verb {
   --mood-tint: hsl(
-    var(--mood-hue, 38) var(--mood-sat) var(--mood-light) / var(--mood-alpha-verb)
+    var(--mood-hue, 190) var(--mood-sat) var(--mood-light) / var(--mood-alpha-verb)
   );
 }
 
@@ -1381,17 +1381,17 @@ html:not([data-highlight-subjunctive='off']) .mood-verb {
 
 html[data-theme='high-contrast']:not([data-highlight-subjunctive='off']) .mood-verb {
   text-decoration: underline;
-  text-decoration-color: hsl(var(--mood-hue, 38) 100% 35%);
+  text-decoration-color: hsl(var(--mood-hue, 190) 100% 35%);
   text-decoration-thickness: 0.1em;
   text-underline-offset: 0.15em;
 }
 
 /* The active chunk under emphasis 'color'/'both' paints its whole cell with
-   --highlight-bg — a yellow band. An alpha tint over yellow loses most of its
-   contrast (worst case: the amber pair on the yellow band), so lift both
-   alphas while that band is up. If this still reads badly in practice, the
-   two other levers are dropping 38 from MOOD_HUES in views.tsx, or giving the
-   verb the underline treatment here the way high-contrast gets it. */
+   --highlight-bg — a yellow band — and the tint is alpha-composited over it,
+   losing contrast. Lifting both alphas and darkening the tint recovers it,
+   but only for hues far enough from yellow: this is why MOOD_HUES carries no
+   amber. Verified across all six themes in the preview harness; if you add a
+   hue, check it on this band before trusting it. */
 [data-emphasis='color'] .pair-row.current.tl-active:not(.fading) .pair-tl,
 [data-emphasis='both'] .pair-row.current.tl-active:not(.fading) .pair-tl {
   --mood-alpha-trigger: 0.3;

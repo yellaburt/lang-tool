@@ -3258,14 +3258,21 @@ function tokenizeSpanish(text: string): SpanishToken[] {
 }
 
 // Hue angles cycled by pairId, so a trigger and the verb it licenses share a
-// hue family while neighbouring pairs stay tellable apart. Amber leads — the
-// spec's default pairing. The CSS derives both the muted trigger tint and the
-// saturated verb tint from this one angle.
-const MOOD_HUES: ReadonlyArray<number> = [38, 190, 280, 340];
+// hue family while neighbouring pairs stay tellable apart. The CSS derives
+// both the muted trigger tint and the saturated verb tint from this one angle.
+//
+// Deliberately no amber/yellow here, despite the spec suggesting "soft amber":
+// the active chunk's emphasis band IS yellow (--highlight-bg), and an amber
+// tint over it disappears — verified in the preview harness. Every hue
+// here sits far enough from that band to survive being painted on top of it.
+const MOOD_HUES: ReadonlyArray<number> = [190, 280, 340, 150];
 
+// pairIds start at 1, so subtract before the modulo — otherwise the first pair
+// in a chunk gets MOOD_HUES[1] and amber only ever lands on a chunk's *fourth*
+// pair, which in ≤15-word chunks is essentially never.
 function moodHue(pairId: number): number {
   const n = MOOD_HUES.length;
-  return MOOD_HUES[((pairId % n) + n) % n]!;
+  return MOOD_HUES[(((pairId - 1) % n) + n) % n]!;
 }
 
 function ClickableSpanish({
