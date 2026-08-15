@@ -246,6 +246,7 @@ export type AppAction =
   | { readonly kind: 'go-to-library' }
   | { readonly kind: 'set-theme'; readonly theme: ThemeName }
   | { readonly kind: 'set-emphasis-style'; readonly style: EmphasisStyle }
+  | { readonly kind: 'toggle-highlight-subjunctive' }
   | { readonly kind: 'set-tts-voice'; readonly voiceName: string | null }
   | { readonly kind: 'set-english-tts-voice'; readonly voiceName: string | null }
   | { readonly kind: 'toggle-settings' }
@@ -1044,6 +1045,14 @@ function reducer(state: AppState, action: AppAction): AppState {
         learner: updateSettings(state.learner, { emphasisStyle: action.style }),
       };
 
+    case 'toggle-highlight-subjunctive':
+      return {
+        ...state,
+        learner: updateSettings(state.learner, {
+          highlightSubjunctive: !state.learner.settings.highlightSubjunctive,
+        }),
+      };
+
     case 'set-tts-voice':
       return {
         ...state,
@@ -1594,6 +1603,18 @@ export function App() {
   useEffect(() => {
     document.documentElement.setAttribute('data-emphasis', emphasisStyle);
   }, [emphasisStyle]);
+  // Subjunctive highlighting is gated purely in CSS off this attribute, so the
+  // annotation classes render unconditionally and the toggle costs no re-render
+  // of the chunk tree. The CSS matches on 'off' rather than 'on', so the
+  // highlights are already correct on first paint (default ON) before this
+  // effect runs.
+  const highlightSubjunctive = state.learner.settings.highlightSubjunctive;
+  useEffect(() => {
+    document.documentElement.setAttribute(
+      'data-highlight-subjunctive',
+      highlightSubjunctive ? 'on' : 'off',
+    );
+  }, [highlightSubjunctive]);
 
   // Batch-fetch effect: drives lazy, incremental processing of a passage's
   // sentences. Fires whenever any of its inputs change. The guards inside

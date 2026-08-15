@@ -59,6 +59,7 @@ export function defaultSettings(): Settings {
     readAloudOnAdvance: true,
     theme: 'white',
     emphasisStyle: 'color',
+    highlightSubjunctive: true,
   };
 }
 

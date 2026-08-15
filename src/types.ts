@@ -247,6 +247,10 @@ export interface Settings {
   readonly readAloudOnAdvance: boolean;
   readonly theme: ThemeName;
   readonly emphasisStyle: EmphasisStyle;
+  // Tint subjunctive verbs and their mood triggers in the passage text. Default
+  // ON. Absent from older stored settings blobs, where defaultSettings() fills
+  // it in on load — no migration (settings are one JSONB blob).
+  readonly highlightSubjunctive: boolean;
 }
 
 export interface LearnerState {

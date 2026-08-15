@@ -76,10 +76,12 @@ function SettingsGearButton({ dispatch }: { dispatch: (a: AppAction) => void }) 
 function ThemePickers({
   theme,
   emphasisStyle,
+  highlightSubjunctive,
   dispatch,
 }: {
   theme: ThemeName;
   emphasisStyle: EmphasisStyle;
+  highlightSubjunctive: boolean;
   dispatch: (a: AppAction) => void;
 }) {
   return (
@@ -116,6 +118,17 @@ function ThemePickers({
             </option>
           ))}
         </select>
+      </label>
+      <label
+        className="toggle-row"
+        title="Tint subjunctive verbs and the words that trigger them. Turn it off to test whether you spot them unaided."
+      >
+        <input
+          type="checkbox"
+          checked={highlightSubjunctive}
+          onChange={() => dispatch({ kind: 'toggle-highlight-subjunctive' })}
+        />
+        <span>Highlight subjunctive verbs</span>
       </label>
     </div>
   );
@@ -551,6 +564,7 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
           <ThemePickers
             theme={settings.theme}
             emphasisStyle={settings.emphasisStyle}
+            highlightSubjunctive={settings.highlightSubjunctive}
             dispatch={dispatch}
           />
         </details>

@@ -162,8 +162,8 @@ resolve/validate the spans. Bump `PROMPT_VERSION` → `v5` in both copies.
 | 3 | Resolve `span`→char range + validate/drop; carry through to `Chunk` (both prose + lyrics paths) | `prompt.ts`, `chunk-and-gloss/index.ts`, `app.tsx`, `prompt.test.ts` | 1–1.5 hr | ✅ done |
 | 4 | Render: thread offsets through tokenizer, apply hue classes | `views.tsx` (`tokenizeSpanish`, `ClickableSpanish`) | 1.5–2.5 hr | ✅ done |
 | 5 | Styles: trigger/verb tints keyed on `--mood-hue`, per theme | `app.css` | 1.5–3 hr | ✅ done, verified in all 6 themes |
-| 6 | Setting (`highlightSubjunctive`, default ON) + toggle + CSS gate | `types.ts`, `core.ts`, `app.tsx`, `views.tsx` | 1–1.5 hr | ⬜ next |
-| 7 | Manual verification (seed passages, mobile tap, toggle, themes) | seed/manual | 1–1.5 hr | ⬜ |
+| 6 | Setting (`highlightSubjunctive`, default ON) + toggle + CSS gate | `types.ts`, `core.ts`, `app.tsx`, `views.tsx` | 1–1.5 hr | ✅ done |
+| 7 | Manual verification (seed passages, mobile tap, toggle, themes) | seed/manual | 1–1.5 hr | ⬜ next |
 
 **Original total: ~8–12 hours, tail to ~15.** Steps 1–3 landed near estimate.
 **Remaining (4–7): ~5–8 hours, tail ~9** — the only soft spot is cross-theme CSS
@@ -279,6 +279,21 @@ Past sentences dim via `color` only, so the tint composes there without help.
   effect (~1596).
 - **6c** `views.tsx` `ThemePickers` (~75): add an Appearance-section checkbox
   dispatching the new action.
+
+**Step 6 as built:** the action is **`toggle-highlight-subjunctive`** (no
+payload), not the `set-highlight-subjunctive` this section proposed — every
+other boolean setting in the reducer is a payload-free `toggle-*`
+(`toggle-english-tts`, `toggle-re-read`, `toggle-read-aloud-on-advance`);
+`set-emphasis-style` takes a payload only because emphasis is an enum. The
+toggle is a `.toggle-row` checkbox at the end of `ThemePickers`, matching the
+other settings toggles rather than sitting alongside the two `<select>`s.
+
+`normalizeSettings` confirmed to need no change: `fetchSettings` returns
+`{ ...defaultSettings(), ...normalizeSettings(raw) }`, so a blob without the
+key inherits the `true` default. No migration, as predicted.
+
+Verified in the harness: flipping the gate removes every tint with no layout
+shift and no effect on the emphasis band.
 
 ## Testing notes
 
