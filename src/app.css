@@ -1307,6 +1307,98 @@ button.ghost {
   background: var(--word-hover-bg, rgba(0, 100, 200, 0.2));
 }
 
+/* ===== Subjunctive highlighting =====
+   Word tokens tagged by chunk-and-gloss carry .mood-trigger / .mood-verb plus
+   an inline --mood-hue (a bare hue angle, cycled by pairId in views.tsx). The
+   trigger and the verb it licenses share a hue; the verb is the saturated one
+   because the verb is the form the reader is meant to notice.
+
+   Painted as a background-IMAGE, not background-color. Two reasons:
+   .word-clickable's hover/active rules set the `background` SHORTHAND, which
+   resets background-image — but those rules are less specific than the gated
+   ones below, so the tint survives a tap while the hover color still shows
+   through underneath. Keeping the tint off background-color also leaves it
+   composing over, rather than replacing, whatever the cell is painted with.
+
+   Nothing here touches padding, border, font-size or display: tap-target
+   geometry must not reflow (task-subjunctive-highlighting.md, step 4).
+
+   Default ON, gated on the NEGATIVE: highlights show unless the root says
+   'off'. That way they don't flash off on first paint while the settings blob
+   is still loading, and step 6's toggle only has to write the attribute. */
+
+:root {
+  --mood-sat: 88%;
+  --mood-light: 52%;
+  --mood-alpha-trigger: 0.16;
+  --mood-alpha-verb: 0.36;
+}
+
+/* Warm grounds (cream/sepia) swallow the amber end of the palette — the tint
+   is closer to the page color there than on white, so both alphas come up. */
+[data-theme='cream'],
+[data-theme='sepia'] {
+  --mood-light: 44%;
+  --mood-alpha-trigger: 0.2;
+  --mood-alpha-verb: 0.44;
+}
+
+/* On a near-black ground a mid-lightness tint reads as mud, so lighten and
+   strengthen it. */
+[data-theme='dark'] {
+  --mood-light: 64%;
+  --mood-alpha-trigger: 0.22;
+  --mood-alpha-verb: 0.46;
+}
+
+/* High-contrast exists to be unambiguous; a subtle wash defeats its purpose.
+   Strong tint plus a solid underline on the verb (see below). */
+[data-theme='high-contrast'] {
+  --mood-sat: 100%;
+  --mood-light: 45%;
+  --mood-alpha-trigger: 0.3;
+  --mood-alpha-verb: 0.6;
+}
+
+/* The hue fallback matters: if --mood-hue were ever missing, an invalid hsl()
+   would drop the whole background-image and the word would render untinted. */
+.mood-trigger {
+  --mood-tint: hsl(
+    var(--mood-hue, 38) var(--mood-sat) var(--mood-light) / var(--mood-alpha-trigger)
+  );
+}
+
+.mood-verb {
+  --mood-tint: hsl(
+    var(--mood-hue, 38) var(--mood-sat) var(--mood-light) / var(--mood-alpha-verb)
+  );
+}
+
+html:not([data-highlight-subjunctive='off']) .mood-trigger,
+html:not([data-highlight-subjunctive='off']) .mood-verb {
+  background-image: linear-gradient(var(--mood-tint), var(--mood-tint));
+}
+
+html[data-theme='high-contrast']:not([data-highlight-subjunctive='off']) .mood-verb {
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--mood-hue, 38) 100% 35%);
+  text-decoration-thickness: 0.1em;
+  text-underline-offset: 0.15em;
+}
+
+/* The active chunk under emphasis 'color'/'both' paints its whole cell with
+   --highlight-bg — a yellow band. An alpha tint over yellow loses most of its
+   contrast (worst case: the amber pair on the yellow band), so lift both
+   alphas while that band is up. If this still reads badly in practice, the
+   two other levers are dropping 38 from MOOD_HUES in views.tsx, or giving the
+   verb the underline treatment here the way high-contrast gets it. */
+[data-emphasis='color'] .pair-row.current.tl-active:not(.fading) .pair-tl,
+[data-emphasis='both'] .pair-row.current.tl-active:not(.fading) .pair-tl {
+  --mood-alpha-trigger: 0.3;
+  --mood-alpha-verb: 0.6;
+  --mood-light: 42%;
+}
+
 /* ===== Word lookup + grammar panels =====
    Both panels share most styling (background, padding, mobile bottom-sheet
    behavior). The accent color (border-left on desktop, border-top on mobile)

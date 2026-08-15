@@ -161,8 +161,8 @@ resolve/validate the spans. Bump `PROMPT_VERSION` → `v5` in both copies.
 | 2 | Prompt + tool schema (both copies), bump `PROMPT_VERSION`→`v5` | `prompt.ts`, `chunk-and-gloss/index.ts` | 1.5–2.5 hr | ✅ done |
 | 3 | Resolve `span`→char range + validate/drop; carry through to `Chunk` (both prose + lyrics paths) | `prompt.ts`, `chunk-and-gloss/index.ts`, `app.tsx`, `prompt.test.ts` | 1–1.5 hr | ✅ done |
 | 4 | Render: thread offsets through tokenizer, apply hue classes | `views.tsx` (`tokenizeSpanish`, `ClickableSpanish`) | 1.5–2.5 hr | ✅ done |
-| 5 | Styles: trigger/verb tints keyed on `--mood-hue`, per theme | `app.css` | 1.5–3 hr | ⬜ next |
-| 6 | Setting (`highlightSubjunctive`, default ON) + toggle + CSS gate | `types.ts`, `core.ts`, `app.tsx`, `views.tsx` | 1–1.5 hr | ⬜ |
+| 5 | Styles: trigger/verb tints keyed on `--mood-hue`, per theme | `app.css` | 1.5–3 hr | ✅ done (needs eyeball) |
+| 6 | Setting (`highlightSubjunctive`, default ON) + toggle + CSS gate | `types.ts`, `core.ts`, `app.tsx`, `views.tsx` | 1–1.5 hr | ⬜ next |
 | 7 | Manual verification (seed passages, mobile tap, toggle, themes) | seed/manual | 1–1.5 hr | ⬜ |
 
 **Original total: ~8–12 hours, tail to ~15.** Steps 1–3 landed near estimate.
@@ -224,6 +224,36 @@ step 5's CSS reads it as `hsl(var(--mood-hue) …)`.
   eyeball pass for legibility (light + dark).
 - Verify composition with: `.word-clickable` hover/active, the active-chunk emphasis
   rules (~1249), and `.sentences.lookup-open` dimming (~1554).
+
+**Step 5 as built — two of this section's assumptions were wrong:**
+
+1. **"The active chunk changes *text color* via `data-emphasis`, so a background
+   tint composes cleanly."** It does not. `[data-emphasis='color'|'both']` paints
+   the whole `.pair-tl` cell with `--highlight-bg` — a yellow band (`#fff59d`
+   white, `#ffff00` high-contrast). An alpha tint over yellow loses most of its
+   contrast, worst case the amber pair (hue 38) on the yellow band. Mitigated by
+   lifting both alphas and darkening `--mood-light` while that band is up. **This
+   is the specific thing to eyeball first.** If it still reads badly the levers
+   are: drop 38 from `MOOD_HUES`, or give the verb the underline treatment that
+   high-contrast gets.
+2. **`.word-clickable`'s hover/active use the `background` SHORTHAND**, which
+   resets `background-image`. So the tint is painted as a `background-image`
+   (`linear-gradient(var(--mood-tint), var(--mood-tint))`) and the gated rules
+   outrank the hover rules — tint survives the tap, hover color shows through
+   underneath. Do not "simplify" this to `background-color`; that trades away
+   tap feedback on highlighted words.
+
+**Gate is on the NEGATIVE** — `html:not([data-highlight-subjunctive='off'])` —
+not `='on'` as this section originally said. Default is ON, and gating this way
+means highlights don't flash off on first paint before the settings blob loads,
+and step 5 is verifiable before step 6 exists. Step 6 only has to write the
+attribute.
+
+Tuning knobs are four inherited vars (`--mood-sat`, `--mood-light`,
+`--mood-alpha-trigger`, `--mood-alpha-verb`) with per-theme overrides for
+cream/sepia (warm grounds swallow amber), dark (mid tints read as mud), and
+high-contrast (soft wash defeats the theme; gets a solid underline on the verb).
+Past sentences dim via `color` only, so the tint composes there without help.
 
 ### Step 6 — setting + toggle + gate
 
