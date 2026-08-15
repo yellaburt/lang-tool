@@ -4,15 +4,31 @@
 
 // Bump this whenever the prompt or tool schema changes so cached results are
 // invalidated client-side. The cache key is SHA-256(passage|model|version).
-export const PROMPT_VERSION = 'v4';
+// v5: added mood_annotations (subjunctive highlighting) to the tool schema.
+export const PROMPT_VERSION = 'v5';
 
 // Default model used by both client cache key and edge function.
 export const MODEL = 'claude-haiku-4-5';
+
+// Resolved subjunctive-highlighting annotation, offsets into tlText. Mirrors
+// MoodAnnotation in types.ts — kept in sync manually (this file is self-
+// contained so it can be duplicated into the Deno edge function).
+export type MoodRole = 'trigger' | 'subjunctive_verb';
+
+export interface MoodAnnotation {
+  readonly start: number;
+  readonly end: number;
+  readonly role: MoodRole;
+  readonly pairId: number;
+}
 
 export interface ChunkAndGloss {
   readonly tlText: string;
   readonly englishGloss: string;
   readonly sentenceIndex: number;
+  // Resolved server-side from the model's raw span output. Absent when the
+  // chunk has no subjunctive forms.
+  readonly moodAnnotations?: ReadonlyArray<MoodAnnotation>;
 }
 
 export const SYSTEM_PROMPT = `You are a translation aid for an adult Spanish-reading practice tool. The user pastes a passage that may be in Spanish OR in English. Your job: produce Spanish chunks (5-15 words each) with an English gloss for each chunk.
@@ -64,6 +80,33 @@ Output:
 
 Note: the Spanish in Example 2 is your translation; the English glosses are the user's original English, sliced to align with each Spanish chunk.
 
+MOOD ANNOTATIONS (subjunctive highlighting):
+
+For each chunk, also return a mood_annotations array marking Spanish subjunctive verb forms and the mood triggers that license them. This drives a visual highlight that helps the reader notice subjunctive morphology. If a chunk has no subjunctive forms, return an empty mood_annotations array (or omit it).
+
+What to tag:
+- Every subjunctive VERB form: present, imperfect (both -ra and -se forms), present perfect, and pluperfect subjunctive. For perfect forms, tag the WHOLE verb phrase including the auxiliary (e.g. "haya llamado", "hubiera venido"). role = "subjunctive_verb".
+- The mood TRIGGER when it appears in the SAME chunk: a conjunction or verb + que, or a subordinator that governs the subjunctive (e.g. "quiero que", "dudo que", "es posible que", "para que", "sin que", "antes de que"). role = "trigger".
+
+Pairing (pair_id):
+- A trigger and the verb(s) it licenses share the same integer pair_id. Number pair_ids starting at 1 within each chunk.
+- A single trigger may license multiple verbs — they all share its pair_id.
+- A verb with NO trigger in the same chunk (imperatives, independent uses, or a trigger that fell in a previous chunk) still gets its own unique pair_id, with no trigger sharing it.
+
+Special cases:
+- Negative imperatives ("no me digas") and independent subjunctive uses ("que te vaya bien", "¡viva!"): tag the verb, no trigger.
+- Two-mood triggers (aunque, cuando, quizás, mientras, relative clauses with indefinite antecedents): tag the pair ONLY when the verb is actually subjunctive. When the verb is indicative, tag NOTHING.
+- Do NOT tag indicative verbs, even right after a que or a two-mood trigger.
+- When you are uncertain whether a form is subjunctive in this context (homographs, ambiguous forms after quoted speech), OMIT it. A missed highlight is fine; a wrong one teaches wrong grammar.
+
+Each annotation's "span" MUST be copied verbatim from this chunk's tlText, exactly as it appears (same accents, capitalization, and spacing), so it can be located in the text.
+
+MOOD EXAMPLE — for the chunk tlText "No creo que llames antes de que él llegue":
+- { span: "No creo que", role: "trigger", pair_id: 1 }
+- { span: "llames", role: "subjunctive_verb", pair_id: 1 }
+- { span: "antes de que", role: "trigger", pair_id: 2 }
+- { span: "llegue", role: "subjunctive_verb", pair_id: 2 }
+
 Call split_and_gloss with your output. Do not include any text outside the tool call.`;
 
 // Anthropic tool-use schema. The shape is duplicated from
@@ -91,6 +134,32 @@ export const TOOL_INPUT_SCHEMA = {
             description:
               '0-based index of the source sentence. All sub-chunks of one source sentence share an index.',
           },
+          mood_annotations: {
+            type: 'array',
+            description:
+              'Subjunctive verbs and their mood triggers in this chunk. Empty when the chunk has none.',
+            items: {
+              type: 'object',
+              properties: {
+                span: {
+                  type: 'string',
+                  description:
+                    'Exact substring of this chunk\'s tlText for the trigger or verb, copied verbatim.',
+                },
+                role: {
+                  type: 'string',
+                  enum: ['trigger', 'subjunctive_verb'],
+                  description: 'Whether this span is a mood trigger or the subjunctive verb it licenses.',
+                },
+                pair_id: {
+                  type: 'integer',
+                  description:
+                    'Links a trigger to the verb(s) it licenses (shared id). A verb with no trigger gets its own id.',
+                },
+              },
+              required: ['span', 'role', 'pair_id'],
+            },
+          },
         },
         required: ['tlText', 'englishGloss', 'sentenceIndex'],
       },
@@ -101,6 +170,33 @@ export const TOOL_INPUT_SCHEMA = {
 
 export const TOOL_DESCRIPTION =
   'Break Spanish text into comprehensible-sized chunks with English glosses.';
+
+// Resolve the model's raw span-based mood_annotations into offset-based
+// MoodAnnotations against a chunk's tlText. Each span must appear verbatim in
+// tlText; annotations whose span can't be located (or that are malformed) are
+// dropped — false negatives are cheap, false positives teach wrong grammar.
+// Repeated spans resolve to their first occurrence (adequate for ≤15-word
+// chunks). Returns undefined when nothing resolves, so the field is omitted.
+export function resolveMoodAnnotations(
+  tlText: string,
+  raw: unknown,
+): ReadonlyArray<MoodAnnotation> | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const resolved: MoodAnnotation[] = [];
+  for (const a of raw) {
+    if (typeof a !== 'object' || a === null) continue;
+    const span = (a as { span?: unknown }).span;
+    const role = (a as { role?: unknown }).role;
+    const pairId = (a as { pair_id?: unknown }).pair_id;
+    if (typeof span !== 'string' || span.length === 0) continue;
+    if (role !== 'trigger' && role !== 'subjunctive_verb') continue;
+    if (typeof pairId !== 'number' || !Number.isFinite(pairId)) continue;
+    const start = tlText.indexOf(span);
+    if (start < 0) continue;
+    resolved.push({ start, end: start + span.length, role, pairId: Math.trunc(pairId) });
+  }
+  return resolved.length > 0 ? resolved : undefined;
+}
 
 // Validate a raw tool-use response into a known shape. Either the client or
 // the edge function can call this. Throws on invalid input.
@@ -124,10 +220,15 @@ export function validateChunksFromToolUse(input: unknown): ReadonlyArray<ChunkAn
       typeof (c as { sentenceIndex?: unknown }).sentenceIndex === 'number'
     ) {
       const v = c as { tlText: string; englishGloss: string; sentenceIndex: number };
+      const moodAnnotations = resolveMoodAnnotations(
+        v.tlText,
+        (c as { mood_annotations?: unknown }).mood_annotations,
+      );
       validated.push({
         tlText: v.tlText,
         englishGloss: v.englishGloss,
         sentenceIndex: Math.trunc(v.sentenceIndex),
+        ...(moodAnnotations ? { moodAnnotations } : {}),
       });
     }
   }

@@ -14,7 +14,8 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 
 // ===== Shared prompt block — keep in sync with src/prompt.ts =====
 
-const PROMPT_VERSION = 'v4';
+// v5: added mood_annotations (subjunctive highlighting) to the tool schema.
+const PROMPT_VERSION = 'v5';
 const PRIMARY_MODEL = 'claude-haiku-4-5';
 const FALLBACK_MODEL = 'claude-sonnet-4-5';
 // Wall-clock timeouts per call. Supabase Edge Functions get killed around
@@ -72,6 +73,33 @@ Output:
 
 Note: the Spanish in Example 2 is your translation; the English glosses are the user's original English, sliced to align with each Spanish chunk.
 
+MOOD ANNOTATIONS (subjunctive highlighting):
+
+For each chunk, also return a mood_annotations array marking Spanish subjunctive verb forms and the mood triggers that license them. This drives a visual highlight that helps the reader notice subjunctive morphology. If a chunk has no subjunctive forms, return an empty mood_annotations array (or omit it).
+
+What to tag:
+- Every subjunctive VERB form: present, imperfect (both -ra and -se forms), present perfect, and pluperfect subjunctive. For perfect forms, tag the WHOLE verb phrase including the auxiliary (e.g. "haya llamado", "hubiera venido"). role = "subjunctive_verb".
+- The mood TRIGGER when it appears in the SAME chunk: a conjunction or verb + que, or a subordinator that governs the subjunctive (e.g. "quiero que", "dudo que", "es posible que", "para que", "sin que", "antes de que"). role = "trigger".
+
+Pairing (pair_id):
+- A trigger and the verb(s) it licenses share the same integer pair_id. Number pair_ids starting at 1 within each chunk.
+- A single trigger may license multiple verbs — they all share its pair_id.
+- A verb with NO trigger in the same chunk (imperatives, independent uses, or a trigger that fell in a previous chunk) still gets its own unique pair_id, with no trigger sharing it.
+
+Special cases:
+- Negative imperatives ("no me digas") and independent subjunctive uses ("que te vaya bien", "¡viva!"): tag the verb, no trigger.
+- Two-mood triggers (aunque, cuando, quizás, mientras, relative clauses with indefinite antecedents): tag the pair ONLY when the verb is actually subjunctive. When the verb is indicative, tag NOTHING.
+- Do NOT tag indicative verbs, even right after a que or a two-mood trigger.
+- When you are uncertain whether a form is subjunctive in this context (homographs, ambiguous forms after quoted speech), OMIT it. A missed highlight is fine; a wrong one teaches wrong grammar.
+
+Each annotation's "span" MUST be copied verbatim from this chunk's tlText, exactly as it appears (same accents, capitalization, and spacing), so it can be located in the text.
+
+MOOD EXAMPLE — for the chunk tlText "No creo que llames antes de que él llegue":
+- { span: "No creo que", role: "trigger", pair_id: 1 }
+- { span: "llames", role: "subjunctive_verb", pair_id: 1 }
+- { span: "antes de que", role: "trigger", pair_id: 2 }
+- { span: "llegue", role: "subjunctive_verb", pair_id: 2 }
+
 Call split_and_gloss with your output. Do not include any text outside the tool call.`;
 
 // Prepended to SYSTEM_PROMPT when the caller flags this batch as song lyrics.
@@ -97,6 +125,20 @@ const TOOL = {
             tlText: { type: 'string' },
             englishGloss: { type: 'string' },
             sentenceIndex: { type: 'integer' },
+            mood_annotations: {
+              type: 'array',
+              description:
+                'Subjunctive verbs and their mood triggers in this chunk. Empty when the chunk has none.',
+              items: {
+                type: 'object',
+                properties: {
+                  span: { type: 'string' },
+                  role: { type: 'string', enum: ['trigger', 'subjunctive_verb'] },
+                  pair_id: { type: 'integer' },
+                },
+                required: ['span', 'role', 'pair_id'],
+              },
+            },
           },
           required: ['tlText', 'englishGloss', 'sentenceIndex'],
         },
@@ -241,10 +283,44 @@ Deno.serve(async (req) => {
 
 // ===== Anthropic call w/ timeout + structured parsing =====
 
+type MoodRole = 'trigger' | 'subjunctive_verb';
+
+interface MoodAnnotation {
+  start: number;
+  end: number;
+  role: MoodRole;
+  pairId: number;
+}
+
 interface ValidatedChunk {
   tlText: string;
   englishGloss: string;
   sentenceIndex: number;
+  moodAnnotations?: MoodAnnotation[];
+}
+
+// Resolve the model's raw span-based mood_annotations into offset-based
+// MoodAnnotations against a chunk's tlText. Mirrors resolveMoodAnnotations in
+// src/prompt.ts — keep in sync. Each span must appear verbatim in tlText;
+// malformed or unlocatable annotations are dropped (false negatives are cheap,
+// false positives teach wrong grammar). Repeated spans resolve to their first
+// occurrence. Returns undefined when nothing resolves, so the field is omitted.
+function resolveMoodAnnotations(tlText: string, raw: unknown): MoodAnnotation[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const resolved: MoodAnnotation[] = [];
+  for (const a of raw) {
+    if (typeof a !== 'object' || a === null) continue;
+    const span = (a as { span?: unknown }).span;
+    const role = (a as { role?: unknown }).role;
+    const pairId = (a as { pair_id?: unknown }).pair_id;
+    if (typeof span !== 'string' || span.length === 0) continue;
+    if (role !== 'trigger' && role !== 'subjunctive_verb') continue;
+    if (typeof pairId !== 'number' || !Number.isFinite(pairId)) continue;
+    const start = tlText.indexOf(span);
+    if (start < 0) continue;
+    resolved.push({ start, end: start + span.length, role, pairId: Math.trunc(pairId) });
+  }
+  return resolved.length > 0 ? resolved : undefined;
 }
 
 async function callModel(
@@ -307,10 +383,15 @@ async function callModel(
       typeof (c as Record<string, unknown>).sentenceIndex === 'number'
     ) {
       const v = c as ValidatedChunk;
+      const moodAnnotations = resolveMoodAnnotations(
+        v.tlText,
+        (c as { mood_annotations?: unknown }).mood_annotations,
+      );
       chunks.push({
         tlText: v.tlText,
         englishGloss: v.englishGloss,
         sentenceIndex: Math.trunc(v.sentenceIndex),
+        ...(moodAnnotations ? { moodAnnotations } : {}),
       });
     }
   }

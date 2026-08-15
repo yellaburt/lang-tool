@@ -82,6 +82,21 @@ export interface Passage {
   readonly subfolder: string | null;
 }
 
+// Subjunctive-highlighting annotation on a chunk. A mood TRIGGER (e.g. "quiero
+// que", "para que") and the SUBJUNCTIVE_VERB it licenses share a pairId so the
+// renderer can tint them in the same hue family. `start`/`end` are character
+// offsets into the chunk's tlText, resolved server-side from the model's raw
+// span output (see chunk-and-gloss). A verb may appear with no trigger in the
+// same chunk — it still gets its own pairId (see edge cases in the task doc).
+export type MoodRole = 'trigger' | 'subjunctive_verb';
+
+export interface MoodAnnotation {
+  readonly start: number;
+  readonly end: number;
+  readonly role: MoodRole;
+  readonly pairId: number;
+}
+
 export interface Chunk {
   readonly id: ChunkId;
   readonly passageId: PassageId;
@@ -95,6 +110,11 @@ export interface Chunk {
   // with blank lines). Rendering uses this to draw a stanza break above.
   // Omitted in prose mode for backward compatibility.
   readonly precededByBlankLine?: boolean;
+  // Subjunctive highlighting. Absent on chunks processed before this feature
+  // (v4 and earlier) and on chunks with no subjunctive forms — the renderer
+  // treats absent/empty as "nothing to highlight". Backward-compatible like
+  // precededByBlankLine.
+  readonly moodAnnotations?: ReadonlyArray<MoodAnnotation>;
 }
 
 export type VocabItem =

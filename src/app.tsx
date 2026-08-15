@@ -35,6 +35,7 @@ import {
   EmphasisStyle,
   GrammarExplanation,
   LearnerState,
+  MoodAnnotation,
   Passage,
   PassageId,
   ProcessingStatus,
@@ -1686,28 +1687,47 @@ export function App() {
         // global index, so each line renders as its own row with its own
         // stanza-break flag. Prose keeps per-sentence sub-chunking, shifting
         // the model's 0..N-1 sentenceIndex up by the count already processed.
-        const newChunks: Chunk[] = isLyrics
-          ? [
-              {
-                id: ids.newChunkId(),
-                passageId,
-                index: startIndex,
-                sentenceIndex: processed,
-                tlText: chunkData.map((cg) => cg.tlText).join(' '),
-                englishGloss: chunkData.map((cg) => cg.englishGloss).join(' '),
-                audioRef: null,
-                ...(precededByBlankLine ? { precededByBlankLine: true } : {}),
-              },
-            ]
-          : chunkData.map((cg, i) => ({
+        let newChunks: Chunk[];
+        if (isLyrics) {
+          // The line's sub-chunks are joined with a single space into one
+          // chunk, so each sub-chunk's mood-annotation offsets shift by the
+          // running length (tlText + 1 for the join space). In the usual case
+          // the model returns a single sub-chunk and the shift is a no-op.
+          const lyricMoods: MoodAnnotation[] = [];
+          let moodOffset = 0;
+          for (const cg of chunkData) {
+            if (cg.moodAnnotations) {
+              for (const a of cg.moodAnnotations) {
+                lyricMoods.push({ ...a, start: a.start + moodOffset, end: a.end + moodOffset });
+              }
+            }
+            moodOffset += cg.tlText.length + 1;
+          }
+          newChunks = [
+            {
               id: ids.newChunkId(),
               passageId,
-              index: startIndex + i,
-              sentenceIndex: sentenceOffset + cg.sentenceIndex,
-              tlText: cg.tlText,
-              englishGloss: cg.englishGloss,
+              index: startIndex,
+              sentenceIndex: processed,
+              tlText: chunkData.map((cg) => cg.tlText).join(' '),
+              englishGloss: chunkData.map((cg) => cg.englishGloss).join(' '),
               audioRef: null,
-            }));
+              ...(precededByBlankLine ? { precededByBlankLine: true } : {}),
+              ...(lyricMoods.length > 0 ? { moodAnnotations: lyricMoods } : {}),
+            },
+          ];
+        } else {
+          newChunks = chunkData.map((cg, i) => ({
+            id: ids.newChunkId(),
+            passageId,
+            index: startIndex + i,
+            sentenceIndex: sentenceOffset + cg.sentenceIndex,
+            tlText: cg.tlText,
+            englishGloss: cg.englishGloss,
+            audioRef: null,
+            ...(cg.moodAnnotations ? { moodAnnotations: cg.moodAnnotations } : {}),
+          }));
+        }
         dispatch({
           kind: 'append-chunks',
           passageId,
