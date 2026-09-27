@@ -7,8 +7,11 @@ import {
   countSignificantWords,
   findNextChapter,
   isBookLikeFolder,
+  modeHasAudio,
   passagePercentRead,
+  speechWindow,
   splitBookIntoChapters,
+  tenseNote,
 } from './core';
 import type { ResumeTarget } from './core';
 import { hasApiKey } from './llm';
@@ -20,6 +23,7 @@ import {
   EmphasisStyle,
   MoodAnnotation,
   Passage,
+  ReadingMode,
   Settings,
   ThemeName,
 } from './types';
@@ -27,9 +31,18 @@ import { buildEmptyPassage } from './app';
 import type {
   AppAction,
   AppState,
+  ChunkRetryUiState,
   GrammarPanelUiState,
   WordLookupUiState,
 } from './app';
+
+const READING_MODE_LABEL: Readonly<Record<ReadingMode, string>> = {
+  scaffolded: 'Scaffolded',
+  listening: 'Listening',
+  light: 'Light',
+  reading: 'Reading',
+  reveal: 'Read, listen, reveal',
+};
 
 // === Shared view props ===
 
@@ -394,10 +407,7 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
         <details className="modal-section">
           <summary className="section-summary">
             <h3>Reading mode</h3>
-            <span className="section-value">
-              {settings.readingMode.charAt(0).toUpperCase() +
-                settings.readingMode.slice(1)}
-            </span>
+            <span className="section-value">{READING_MODE_LABEL[settings.readingMode]}</span>
           </summary>
           <div className="mode-picker" role="radiogroup" aria-label="Reading mode">
             <label className="mode-option">
@@ -444,6 +454,17 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
               />
               <span>Reading</span>
             </label>
+            <label className="mode-option">
+              <input
+                type="radio"
+                name="reading-mode"
+                checked={settings.readingMode === 'reveal'}
+                onChange={() =>
+                  dispatch({ kind: 'set-reading-mode', mode: 'reveal' })
+                }
+              />
+              <span>{READING_MODE_LABEL.reveal}</span>
+            </label>
           </div>
           <p className="muted small">
             {settings.readingMode === 'scaffolded' &&
@@ -454,6 +475,8 @@ export function SettingsModal({ state, dispatch }: ViewProps) {
               'Spanish audio plays once with the text visible, then waits. Tap Show English to see the gloss, then tap Continue (or press Space) to move on. Nothing advances on its own — you always drive.'}
             {settings.readingMode === 'reading' &&
               'Text-first and silent: the Spanish shows with no audio so you work out the meaning at your own pace. Tap a word to look it up, or Show English for the gloss; tap Continue (or press Space) to move on. Nothing auto-advances.'}
+            {settings.readingMode === 'reveal' &&
+              'Read the Spanish first. Tap Continue and the text hides while the audio plays (Replay to hear it again). When it ends, the Spanish comes back; the English stays hidden until you tap Show English. Continue moves on.'}
           </p>
           {settings.readingMode === 'reading' && (
             <label
@@ -1833,6 +1856,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     englishRevealed,
     readingSpeaking,
     isPaused,
+    speechNonce,
   } = state.ui;
   const readingMode = state.learner.settings.readingMode;
   // Keep the existing scaffolded/listening effect tree unchanged: 'listening'
@@ -1844,6 +1868,13 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   // audio only ever plays during the SPEAKING phase (readingSpeaking), and only
   // when readAloudOnAdvance is on.
   const textMode = readingMode === 'reading';
+  // 'reveal' mode (read, listen, reveal). Reuses the per-chunk flags: READ is
+  // !readingSpeaking && !spanishTtsDone (text visible, silent); LISTEN is
+  // readingSpeaking && !spanishTtsDone (text hidden, audio plays); REVEALED is
+  // spanishTtsDone (text back, English behind a Show English tap).
+  const revealMode = readingMode === 'reveal';
+  const revealListening = revealMode && readingSpeaking && !spanishTtsDone;
+  const revealRevealed = revealMode && spanishTtsDone;
   const readAloudOnAdvance = state.learner.settings.readAloudOnAdvance;
   const speechPaceMultiplier = state.learner.settings.speechPaceMultiplier;
   const readPaceMultiplier = state.learner.settings.readPaceMultiplier;
@@ -1925,11 +1956,11 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   const firstVoice = swapVoices ? reReadVoice : voice;
   const secondVoice = swapVoices ? voice : reReadVoice;
 
-  // Placeholder chunks (inserted when a batch was refused by the
-  // translation service) have tlText starting with '['. TTS would say
-  // "left bracket ellipsis right bracket" — useless. Detect and skip
-  // speech entirely; the visual text is the only signal needed.
-  const isPlaceholderChunk = currentChunk?.tlText.startsWith('[') ?? false;
+  // An untranslated English-source chunk has no Spanish to speak — its tlText
+  // is the English source. Skip every speech phase for it (marking each done
+  // so the flow moves on); the visible "[not translated]" is the signal. A
+  // chunk missing only its gloss still has Spanish and plays normally.
+  const isPlaceholderChunk = currentChunk?.unavailable === 'translation';
 
   // Will the re-read effect actually fire for this chunk? Same condition
   // as the effect uses, so the highlight logic stays in sync. When re-read
@@ -1947,7 +1978,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   // and advance — so the eye moves straight down into the next chunk's
   // Spanish cell instead of flashing back to English first.
   let activeSide: 'tl' | 'en';
-  if (textMode) {
+  if (textMode || revealMode) {
     // Reading mode: no audio gates the highlight — it sits on Spanish while the
     // reader works, moving to English only once they've revealed the gloss.
     activeSide = englishRevealed ? 'en' : 'tl';
@@ -1971,7 +2002,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   // tap); reading mode is silent, so it keys purely on the Show English toggle.
   const showCurrentGloss = textMode
     ? englishRevealed
-    : lightMode
+    : lightMode || revealMode
       ? spanishTtsDone && englishRevealed
       : spanishTtsDone;
 
@@ -2126,6 +2157,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     isPlaceholderChunk,
     speechPaceMultiplier,
     firstVoice,
+    speechNonce,
     dispatch,
   ]);
 
@@ -2137,14 +2169,24 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   // re-hearing whatever you already heard of the current chunk.
   useEffect(() => {
     if (!currentChunk) return;
-    if (spanishTtsDone) return;
+    if (spanishTtsDone) {
+      // Normally this flips when the utterance ends. Reveal mode's Continue can
+      // also flip it mid-utterance ("skip the rest"), so stop anything still
+      // playing. A naturally finished utterance reports isEnded and is left be.
+      if (spanishSpeechRef.current && !spanishSpeechRef.current.isEnded()) {
+        spanishSpeechRef.current.cancel();
+        spanishSpeechRef.current = null;
+      }
+      return;
+    }
     // In listening mode, wait for the hidden Spanish phase to complete
     // before firing the visible-text Spanish phase.
     if (listeningMode && !listeningHiddenSpanishDone) return;
     // Reading mode is silent in the READING state — the Spanish audio only
     // plays during the SPEAKING phase (after Continue, with readAloudOnAdvance
-    // on). Until then, never start an utterance.
-    if (textMode && !readingSpeaking) return;
+    // on). Until then, never start an utterance. Reveal mode likewise stays
+    // silent until Continue moves it into its hidden LISTEN phase.
+    if ((textMode || revealMode) && !readingSpeaking) return;
 
     if (settingsOpen) {
       if (spanishSpeechRef.current && !spanishSpeechRef.current.isEnded()) {
@@ -2190,12 +2232,14 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     listeningMode,
     listeningHiddenSpanishDone,
     textMode,
+    revealMode,
     readingSpeaking,
     isPaused,
     settingsOpen,
     isPlaceholderChunk,
     speechPaceMultiplier,
     firstVoice,
+    speechNonce,
     dispatch,
   ]);
 
@@ -2209,8 +2253,8 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     if (!spanishTtsDone) return;
     if (englishTtsDone) return;
     if (!englishTtsEnabled) return;
-    // Light mode gates English behind a deliberate "Show English" tap.
-    if (lightMode && !englishRevealed) return;
+    // Light and reveal modes gate English behind a deliberate "Show English" tap.
+    if ((lightMode || revealMode) && !englishRevealed) return;
 
     if (settingsOpen) {
       if (englishSpeechRef.current && !englishSpeechRef.current.isEnded()) {
@@ -2260,6 +2304,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     englishTtsDone,
     englishTtsEnabled,
     lightMode,
+    revealMode,
     textMode,
     englishRevealed,
     isPaused,
@@ -2276,9 +2321,9 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   // voice (e.g., opposite gender) also trains cross-speaker comprehension.
   useEffect(() => {
     if (!currentChunk) return;
-    // Light and reading modes never re-read — the reader controls repetition via
-    // Replay.
-    if (lightMode || textMode) return;
+    // Light, reading and reveal modes never re-read — the reader controls
+    // repetition via Replay.
+    if (lightMode || textMode || revealMode) return;
     if (!reReadEnabled) return;
     if (!spanishTtsDone) return;
     if (englishTtsEnabled && !englishTtsDone) return;
@@ -2336,6 +2381,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     currentChunk?.id,
     lightMode,
     textMode,
+    revealMode,
     reReadEnabled,
     reReadShortChunks,
     spanishTtsDone,
@@ -2374,10 +2420,10 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     if (isPaused) return;
     if (settingsOpen) return;
 
-    // Light AND reading modes never auto-advance: the reader always drives,
-    // tapping Continue. No timer is ever started here. (Reading mode's
+    // Light, reading AND reveal modes never auto-advance: the reader always
+    // drives, tapping Continue. No timer is ever started here. (Reading mode's
     // SPEAKING → advance is handled by its own audio-end effect, not a timer.)
-    if (lightMode || textMode) return;
+    if (lightMode || textMode || revealMode) return;
 
     if (!allSpeechDoneForCurrentChunk) return;
 
@@ -2407,6 +2453,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     allSpeechDoneForCurrentChunk,
     lightMode,
     textMode,
+    revealMode,
     isPaused,
     settingsOpen,
     readPaceMultiplier,
@@ -2434,6 +2481,34 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     dispatch,
   ]);
 
+  // Item 9: speak the tapped word when its definition appears — the word with
+  // its neighbours as written (speechWindow, computed at tap time), in the
+  // passage's Spanish voice. Only in modes that have audio; reading mode stays
+  // silent. The lookup already paused passage audio (and it stays paused until
+  // Resume, as before), so this never talks over the chunk. Web Speech is
+  // local and free, so there's nothing to cache. Closing the panel, or tapping
+  // another word, cuts it off.
+  const lookupNow = state.ui.wordLookup;
+  const lookupSpeechKey =
+    lookupNow?.kind === 'ready' ? `${lookupNow.chunkId}|${lookupNow.word}|${lookupNow.speechWindow}` : null;
+  const lookupSpeechText = lookupNow?.kind === 'ready' ? lookupNow.speechWindow : '';
+  const speakLookups = modeHasAudio(readingMode);
+  useEffect(() => {
+    if (lookupSpeechKey === null || !speakLookups) return;
+    const ctl = speakChunk(
+      lookupSpeechText,
+      voice,
+      0.85 * speechPaceMultiplier,
+      speechPaceMultiplier,
+      () => {},
+    );
+    return () => {
+      if (!ctl.isEnded()) ctl.cancel();
+    };
+    // Keyed on the lookup identity (not voice/pace): re-renders of the same
+    // open definition must not replay it.
+  }, [lookupSpeechKey, speakLookups]);
+
   // Keyboard shortcuts (space / arrows / R).
   useEffect(() => {
     function handler(e: KeyboardEvent) {
@@ -2448,6 +2523,10 @@ export function ReadingView({ state, dispatch }: ViewProps) {
         // means "skip + advance").
         if (textMode) {
           dispatch({ kind: 'reading-continue' });
+        } else if (revealMode) {
+          // Reveal mode: Space is always its Continue (READ → LISTEN →
+          // REVEALED → next chunk; mid-audio it skips to the reveal).
+          dispatch({ kind: 'reveal-continue' });
         } else if (lightMode && lightAwaitingInput) {
           // Light mode: once parked awaiting input, Space means Continue. While
           // Spanish audio is still playing (not yet parked), Space still pauses.
@@ -2455,8 +2534,9 @@ export function ReadingView({ state, dispatch }: ViewProps) {
         } else {
           dispatch({ kind: 'toggle-pause' });
         }
-      } else if ((e.key === 'e' || e.key === 'E') && textMode) {
-        // Reading mode: E toggles the gloss on/off.
+      } else if ((e.key === 'e' || e.key === 'E') && (textMode || revealRevealed)) {
+        // Reading mode (and reveal mode once the text is back): E toggles the
+        // gloss on/off.
         e.preventDefault();
         dispatch({ kind: 'toggle-reading-english' });
       } else if (
@@ -2483,7 +2563,16 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     }
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [dispatch, lightMode, textMode, lightAwaitingInput, englishRevealed]);
+  }, [dispatch, lightMode, textMode, revealMode, revealRevealed, lightAwaitingInput, englishRevealed]);
+
+  // Where an in-panel Continue (word lookup / grammar) should go, if anywhere.
+  // Only the fully manual modes put one there — the parked bar is hidden
+  // while a panel is open.
+  const panelContinue: AppAction | null = textMode
+    ? { kind: 'reading-continue' }
+    : revealMode
+      ? { kind: 'reveal-continue' }
+      : null;
 
   if (!passage) {
     return <ErrorView dispatch={dispatch} message="No passage loaded." />;
@@ -2555,10 +2644,11 @@ export function ReadingView({ state, dispatch }: ViewProps) {
               wordLookup={state.ui.wordLookup}
               grammarPanel={state.ui.grammarPanel}
               hideCurrentChunkText={
-                listeningMode && !listeningHiddenSpanishDone
+                (listeningMode && !listeningHiddenSpanishDone) || revealListening
               }
               showCurrentGloss={showCurrentGloss}
-              textMode={textMode}
+              panelContinue={panelContinue}
+              chunkRetry={state.ui.chunkRetry}
               lookupWordRef={lookupWordRef}
               dispatch={dispatch}
             />
@@ -2706,6 +2796,57 @@ export function ReadingView({ state, dispatch }: ViewProps) {
           </div>
         )}
 
+      {/* Reveal mode (read, listen, reveal): a persistent bar whose buttons
+          follow the phase. READ: Continue (hides the text, plays the audio).
+          LISTEN: Replay + Continue (skip to the reveal). REVEALED: Show/Hide
+          English + Continue (next chunk). The English never appears without a
+          tap. */}
+      {revealMode &&
+        !isDone &&
+        currentChunk !== undefined &&
+        state.ui.wordLookup === null &&
+        state.ui.grammarPanel === null &&
+        !settingsOpen && (
+          <div className="light-action-bar reading-action-bar">
+            <div className="light-buttons">
+              {revealListening && (
+                <button
+                  type="button"
+                  className="light-btn light-btn-secondary"
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    dispatch({ kind: 'replay-current' });
+                  }}
+                >
+                  ↻ Replay
+                </button>
+              )}
+              {revealRevealed && (
+                <button
+                  type="button"
+                  className="light-btn light-btn-secondary"
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    dispatch({ kind: 'toggle-reading-english' });
+                  }}
+                >
+                  {englishRevealed ? 'Hide English' : 'Show English'}
+                </button>
+              )}
+              <button
+                type="button"
+                className="light-btn light-btn-primary"
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  dispatch({ kind: 'reveal-continue' });
+                }}
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        )}
+
       {/* Resume affordance. Fixed to the bottom of the screen (outside the
           scroller) so it's always fully visible and easy to tap — the reader's
           instinct is to tap the "Paused" text to continue. Shown only for a
@@ -2716,6 +2857,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
       {isPaused &&
         !(lightMode && spanishTtsDone) &&
         !textMode &&
+        !revealMode &&
         state.ui.wordLookup === null &&
         state.ui.grammarPanel === null &&
         !settingsOpen && (
@@ -2769,13 +2911,81 @@ interface SentenceItemProps {
   // in ReadingView per mode (audio-done, light's Show-English gate, or reading
   // mode's Show-English toggle).
   readonly showCurrentGloss: boolean;
-  // Reading mode only: surfaces a Continue button inside the lookup/grammar
-  // panels so the reader can advance straight from an open definition.
-  readonly textMode: boolean;
+  // Reading and reveal modes: the action behind a Continue button inside the
+  // lookup/grammar panels, so the reader can advance straight from an open
+  // definition. Null in the modes that don't park.
+  readonly panelContinue: AppAction | null;
+  // State of a manual "retry translation", to show progress/failure on the
+  // chunk being retried.
+  readonly chunkRetry: ChunkRetryUiState | null;
   // Set to the word button the reader taps; the lookup panel scrolls it above
   // the mobile bottom sheet so the word stays visible with its definition.
   readonly lookupWordRef: { current: HTMLElement | null };
   readonly dispatch: (a: AppAction) => void;
+}
+
+// The Spanish side of a chunk. An English-source chunk that couldn't be
+// translated has no Spanish: its English source renders as plain text — no
+// word-tap, no mood highlights — followed by the [not translated] label.
+function ChunkText({
+  chunk,
+  lookupWordRef,
+  dispatch,
+}: {
+  chunk: Chunk;
+  lookupWordRef: { current: HTMLElement | null };
+  dispatch: (a: AppAction) => void;
+}) {
+  if (chunk.unavailable === 'translation') {
+    return (
+      <span className="untranslated-source">
+        {chunk.tlText} <span className="not-translated">[not translated]</span>
+      </span>
+    );
+  }
+  return (
+    <ClickableSpanish
+      text={chunk.tlText}
+      chunkId={chunk.id}
+      moodAnnotations={chunk.moodAnnotations}
+      lookupWordRef={lookupWordRef}
+      dispatch={dispatch}
+    />
+  );
+}
+
+// "Retry translation" for an unavailable chunk, with inline progress/failure.
+function RetryTranslation({
+  chunk,
+  chunkRetry,
+  dispatch,
+}: {
+  chunk: Chunk;
+  chunkRetry: ChunkRetryUiState | null;
+  dispatch: (a: AppAction) => void;
+}) {
+  const mine = chunkRetry?.chunkId === chunk.id ? chunkRetry : null;
+  return (
+    <span className="retry-translation">
+      <button
+        type="button"
+        className="retry-translation-btn"
+        disabled={mine?.kind === 'loading'}
+        onClick={(e) => {
+          e.stopPropagation();
+          e.currentTarget.blur();
+          dispatch({
+            kind: 'retry-chunk',
+            passageId: chunk.passageId,
+            chunkId: chunk.id,
+          });
+        }}
+      >
+        {mine?.kind === 'loading' ? 'Retrying…' : '↻ Retry translation'}
+      </button>
+      {mine?.kind === 'failed' && <span className="retry-translation-error">{mine.message}</span>}
+    </span>
+  );
 }
 
 function SentenceItem({
@@ -2787,7 +2997,8 @@ function SentenceItem({
   grammarPanel,
   hideCurrentChunkText,
   showCurrentGloss,
-  textMode,
+  panelContinue,
+  chunkRetry,
   lookupWordRef,
   dispatch,
 }: SentenceItemProps) {
@@ -2805,32 +3016,46 @@ function SentenceItem({
     // Past sentence: flowing Spanish paragraph + flowing English paragraph.
     // Each chunk still renders separately under the hood so that taps on
     // words attribute to the correct chunkId; the spaces between chunks
-    // make them visually contiguous.
-    const enText = sentence
-      .filter((c) => c.englishGloss !== null && c.englishGloss.length > 0)
-      .map((c) => c.englishGloss)
-      .join(' ');
+    // make them visually contiguous. A chunk with no English shows
+    // "[not translated]" in the English flow, in place — never a gap.
+    const hasEnglish = sentence.some(
+      (c) => c.unavailable === 'gloss' || (c.englishGloss !== null && c.englishGloss.length > 0),
+    );
     return (
       <li className={'sentence past' + (stanzaBreak ? ' stanza-break' : '')}>
         <div className="tl">
           {sentence.map((c, i) => (
             <span key={c.id}>
               {i > 0 && ' '}
-              <ClickableSpanish
-                text={c.tlText}
-                chunkId={c.id}
-                moodAnnotations={c.moodAnnotations}
-                lookupWordRef={lookupWordRef}
-                dispatch={dispatch}
-              />
+              <ChunkText chunk={c} lookupWordRef={lookupWordRef} dispatch={dispatch} />
+              {c.unavailable === 'translation' && (
+                <RetryTranslation chunk={c} chunkRetry={chunkRetry} dispatch={dispatch} />
+              )}
             </span>
           ))}
         </div>
-        {enText.length > 0 && <div className="en">{enText}</div>}
+        {hasEnglish && (
+          <div className="en">
+            {sentence.map((c, i) =>
+              c.unavailable === 'gloss' ? (
+                <span key={c.id}>
+                  {i > 0 && ' '}
+                  <span className="not-translated">[not translated]</span>
+                  <RetryTranslation chunk={c} chunkRetry={chunkRetry} dispatch={dispatch} />
+                </span>
+              ) : c.englishGloss ? (
+                <span key={c.id}>
+                  {i > 0 && ' '}
+                  {c.englishGloss}
+                </span>
+              ) : null,
+            )}
+          </div>
+        )}
         {lookupInThisSentence && wordLookup && (
           <WordLookupPanel
             lookup={wordLookup}
-            textMode={textMode}
+            continueAction={panelContinue}
             lookupWordRef={lookupWordRef}
             dispatch={dispatch}
           />
@@ -2838,7 +3063,7 @@ function SentenceItem({
         {grammarInThisSentence && grammarPanel && (
           <GrammarPanel
             panel={grammarPanel}
-            textMode={textMode}
+            continueAction={panelContinue}
             dispatch={dispatch}
           />
         )}
@@ -2861,7 +3086,8 @@ function SentenceItem({
           // hide only applies to the actively-listening chunk.
           const hideForListening = isCurrentSub && hideCurrentChunkText;
           const showGloss =
-            !isCurrentSub || (showCurrentGloss && c.englishGloss !== null);
+            !isCurrentSub ||
+            (showCurrentGloss && (c.englishGloss !== null || c.unavailable === 'gloss'));
           let rowCls = isCurrentSub ? 'pair-row current' : 'pair-row past';
           if (isCurrentSub) {
             // Emphasis follows the audio through the playback sequence.
@@ -2878,30 +3104,37 @@ function SentenceItem({
                   </span>
                 ) : (
                   <>
-                    <ClickableSpanish
-                      text={c.tlText}
-                      chunkId={c.id}
-                      moodAnnotations={c.moodAnnotations}
-                      lookupWordRef={lookupWordRef}
-                      dispatch={dispatch}
-                    />
-                    <button
-                      type="button"
-                      className="grammar-button"
-                      onClick={(e) => {
-                        e.currentTarget.blur();
-                        dispatch({ kind: 'request-grammar', chunkId: c.id });
-                      }}
-                      aria-label="Explain grammar of this chunk"
-                      title="Explain grammar"
-                    >
-                      ¶
-                    </button>
+                    <ChunkText chunk={c} lookupWordRef={lookupWordRef} dispatch={dispatch} />
+                    {c.unavailable === 'translation' ? (
+                      <RetryTranslation chunk={c} chunkRetry={chunkRetry} dispatch={dispatch} />
+                    ) : (
+                      <button
+                        type="button"
+                        className="grammar-button"
+                        onClick={(e) => {
+                          e.currentTarget.blur();
+                          dispatch({ kind: 'request-grammar', chunkId: c.id });
+                        }}
+                        aria-label="Explain grammar of this chunk"
+                        title="Explain grammar"
+                      >
+                        ¶
+                      </button>
+                    )}
                   </>
                 )}
               </div>
               <div className="pair-en">
-                {hideForListening ? '' : showGloss ? c.englishGloss : ''}
+                {hideForListening || !showGloss ? (
+                  ''
+                ) : c.unavailable === 'gloss' ? (
+                  <>
+                    <span className="not-translated">[not translated]</span>
+                    <RetryTranslation chunk={c} chunkRetry={chunkRetry} dispatch={dispatch} />
+                  </>
+                ) : (
+                  c.englishGloss
+                )}
               </div>
             </div>
           );
@@ -2910,7 +3143,7 @@ function SentenceItem({
       {lookupInThisSentence && wordLookup && (
         <WordLookupPanel
           lookup={wordLookup}
-          textMode={textMode}
+          continueAction={panelContinue}
           lookupWordRef={lookupWordRef}
           dispatch={dispatch}
         />
@@ -2918,7 +3151,7 @@ function SentenceItem({
       {grammarInThisSentence && grammarPanel && (
         <GrammarPanel
           panel={grammarPanel}
-          textMode={textMode}
+          continueAction={panelContinue}
           dispatch={dispatch}
         />
       )}
@@ -3289,6 +3522,29 @@ function moodHue(pairId: number): number {
   return MOOD_HUES[(((pairId - 1) % n) + n) % n]!;
 }
 
+// possible_subjunctive (an uncertain homograph) deliberately reuses the muted
+// trigger tint: it reads as "maybe", never as a confident verb highlight.
+const MOOD_CLASS: Readonly<Record<MoodAnnotation['role'], string>> = {
+  trigger: ' mood-trigger',
+  subjunctive_verb: ' mood-verb',
+  possible_subjunctive: ' mood-trigger mood-possible',
+};
+
+// Item 1 renderer guard: a trigger is only drawn when a subjunctive_verb with
+// the same pairId is in the same chunk — never paired across chunks, and never
+// licensed by a mere possible_subjunctive. The server applies the same rule
+// from v6 on; this also cleans up v5 chunks already stored with stray triggers
+// (e.g. "cuando" + indicative).
+function renderableMoods(
+  annotations: ReadonlyArray<MoodAnnotation> | undefined,
+): ReadonlyArray<MoodAnnotation> {
+  if (!annotations) return [];
+  const licensed = new Set(
+    annotations.filter((a) => a.role === 'subjunctive_verb').map((a) => a.pairId),
+  );
+  return annotations.filter((a) => a.role !== 'trigger' || licensed.has(a.pairId));
+}
+
 function ClickableSpanish({
   text,
   chunkId,
@@ -3306,6 +3562,7 @@ function ClickableSpanish({
   dispatch: (a: AppAction) => void;
 }) {
   const tokens = useMemo(() => tokenizeSpanish(text), [text]);
+  const moods = useMemo(() => renderableMoods(moodAnnotations), [moodAnnotations]);
   return (
     <>
       {tokens.map((t, i) => {
@@ -3314,15 +3571,12 @@ function ClickableSpanish({
         // tap <button> and its geometry are untouched. Annotations are always
         // rendered; the per-user toggle is a CSS gate on a root attribute.
         // First intersecting annotation wins (overlaps are rare).
-        const mood = moodAnnotations?.find((a) => t.start < a.end && a.start < t.end);
+        const mood = moods.find((a) => t.start < a.end && a.start < t.end);
         return (
           <button
             key={i}
             type="button"
-            className={
-              'word-clickable' +
-              (mood ? (mood.role === 'trigger' ? ' mood-trigger' : ' mood-verb') : '')
-            }
+            className={'word-clickable' + (mood ? MOOD_CLASS[mood.role] : '')}
             style={
               mood ? ({ '--mood-hue': `${moodHue(mood.pairId)}` } as CSSProperties) : undefined
             }
@@ -3333,7 +3587,13 @@ function ClickableSpanish({
               // element reference stays valid across the re-render (same key).
               lookupWordRef.current = e.currentTarget;
               e.currentTarget.blur();
-              dispatch({ kind: 'lookup-word', word: t.text, chunkId });
+              dispatch({
+                kind: 'lookup-word',
+                word: t.text,
+                chunkId,
+                tenseNote: tenseNote(text, moods, t.start, t.end),
+                speechWindow: speechWindow(text, t.start, t.end),
+              });
             }}
           >
             {t.text}
@@ -3346,12 +3606,12 @@ function ClickableSpanish({
 
 function WordLookupPanel({
   lookup,
-  textMode,
+  continueAction,
   lookupWordRef,
   dispatch,
 }: {
   lookup: WordLookupUiState;
-  textMode: boolean;
+  continueAction: AppAction | null;
   lookupWordRef: { current: HTMLElement | null };
   dispatch: (a: AppAction) => void;
 }) {
@@ -3387,17 +3647,18 @@ function WordLookupPanel({
       >
       <div className="lookup-header">
         <span className="lookup-word">{lookup.word}</span>
-        {/* Reading mode: advance straight from the open definition. Only once
-            the definition is loaded, so it doesn't flicker in while looking up.
-            Sits in the header so it never crowds the meaning/verb/notes body.
-            'reading-continue' also closes this panel (see reducer). */}
-        {textMode && lookup.kind === 'ready' && (
+        {/* Reading / reveal mode: advance straight from the open definition.
+            Only once the definition is loaded, so it doesn't flicker in while
+            looking up. Sits in the header so it never crowds the
+            meaning/verb/notes body. Both continue actions also close this
+            panel (see reducer). */}
+        {continueAction !== null && lookup.kind === 'ready' && (
           <button
             type="button"
             className="lookup-continue"
             onClick={(e) => {
               e.currentTarget.blur();
-              dispatch({ kind: 'reading-continue' });
+              dispatch(continueAction);
             }}
             title="Continue to the next chunk (closes this definition)"
           >
@@ -3417,6 +3678,10 @@ function WordLookupPanel({
           ×
         </button>
       </div>
+      {/* Tapped a subjunctive trigger: say how its tense sets the
+          subjunctive's (item 7). Deterministic, so it shows immediately,
+          even while the definition loads. */}
+      {lookup.tenseNote !== null && <div className="lookup-tense-note">{lookup.tenseNote}</div>}
       {lookup.kind === 'loading' && (
         <div className="lookup-body lookup-loading">Looking up…</div>
       )}
@@ -3462,11 +3727,11 @@ function WordLookupPanel({
 
 function GrammarPanel({
   panel,
-  textMode,
+  continueAction,
   dispatch,
 }: {
   panel: GrammarPanelUiState;
-  textMode: boolean;
+  continueAction: AppAction | null;
   dispatch: (a: AppAction) => void;
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -3494,15 +3759,15 @@ function GrammarPanel({
       >
         <div className="lookup-header">
           <span className="lookup-word">Grammar</span>
-          {/* Reading mode: advance straight from the open panel (see
-              WordLookupPanel for the rationale). 'reading-continue' closes it. */}
-          {textMode && panel.kind === 'ready' && (
+          {/* Reading / reveal mode: advance straight from the open panel (see
+              WordLookupPanel for the rationale). The continue action closes it. */}
+          {continueAction !== null && panel.kind === 'ready' && (
             <button
               type="button"
               className="lookup-continue"
               onClick={(e) => {
                 e.currentTarget.blur();
-                dispatch({ kind: 'reading-continue' });
+                dispatch(continueAction);
               }}
               title="Continue to the next chunk (closes this panel)"
             >

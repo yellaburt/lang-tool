@@ -5,7 +5,10 @@
 // Bump this whenever the prompt or tool schema changes so cached results are
 // invalidated client-side. The cache key is SHA-256(passage|model|version).
 // v5: added mood_annotations (subjunctive highlighting) to the tool schema.
-export const PROMPT_VERSION = 'v5';
+// v6: faithful-translation framing; possible_subjunctive role + lemma on verb
+//     annotations (lexicon veto); tightened two-mood triggers; preceding-context
+//     and lexicon-facts blocks in the user message.
+export const PROMPT_VERSION = 'v6';
 
 // Default model used by both client cache key and edge function.
 export const MODEL = 'claude-haiku-4-5';
@@ -13,13 +16,35 @@ export const MODEL = 'claude-haiku-4-5';
 // Resolved subjunctive-highlighting annotation, offsets into tlText. Mirrors
 // MoodAnnotation in types.ts — kept in sync manually (this file is self-
 // contained so it can be duplicated into the Deno edge function).
-export type MoodRole = 'trigger' | 'subjunctive_verb';
+export type MoodRole = 'trigger' | 'subjunctive_verb' | 'possible_subjunctive';
+
+export type SubjTense =
+  | 'present'
+  | 'imperfect-ra'
+  | 'imperfect-se'
+  | 'perfect'
+  | 'pluperfect-ra'
+  | 'pluperfect-se';
 
 export interface MoodAnnotation {
   readonly start: number;
   readonly end: number;
   readonly role: MoodRole;
   readonly pairId: number;
+  // Verb annotations only. `lemma` comes from the model; the server's lexicon
+  // post-pass (supabase/functions/_shared/subjunctive.ts) verifies it and
+  // attaches `tense`.
+  readonly lemma?: string;
+  readonly tense?: SubjTense;
+}
+
+// A model-vs-lexicon disagreement for the mood review log (see
+// LexiconDisagreement in _shared/subjunctive.ts).
+export interface LexiconDisagreement {
+  readonly lemma: string;
+  readonly token: string;
+  readonly lexiconAnswer: string;
+  readonly modelAnswer: string;
 }
 
 export interface ChunkAndGloss {
@@ -29,11 +54,16 @@ export interface ChunkAndGloss {
   // Resolved server-side from the model's raw span output. Absent when the
   // chunk has no subjunctive forms.
   readonly moodAnnotations?: ReadonlyArray<MoodAnnotation>;
+  // Server-side only; the client writes these to mood_review_log once the
+  // chunk has an id. Absent when model and lexicon agree.
+  readonly lexiconDisagreements?: ReadonlyArray<LexiconDisagreement>;
 }
 
 export const SYSTEM_PROMPT = `You are a translation aid for an adult Spanish-reading practice tool. The user pastes a passage that may be in Spanish OR in English. Your job: produce Spanish chunks (5-15 words each) with an English gloss for each chunk.
 
-This tool processes ALL kinds of adult reading material — literary fiction, history, journalism, memoir, academic writing — including passages that describe difficult subjects (war, atrocity, illness, sexuality, crime). You are a translation and chunking aid, NOT a content moderator. The user has chosen the source material for their own educational purposes; refusing to process serious literature or historical writing defeats the tool's purpose. Process every input as written.
+The task is a faithful translation of published literary and journalistic work — novels, stories, history, memoir, news — for an adult reader who is studying it in the original. These works often depict violence, sexuality, cruelty, war, crime and illness, and those passages are frequently central to the story. Render them accurately, with the same force and explicitness as the source. You are a translation and chunking aid, NOT a content moderator; the reader chose the text.
+
+NEVER soften, summarize, sanitize, euphemize or omit anything. Every sentence of the input must appear in your output, translated in full. A silently softened or shortened translation is worse than no translation, because the reader cannot tell that anything is missing.
 
 DETECT THE INPUT LANGUAGE FIRST.
 
@@ -80,13 +110,22 @@ Output:
 
 Note: the Spanish in Example 2 is your translation; the English glosses are the user's original English, sliced to align with each Spanish chunk.
 
+INPUT FORMAT:
+
+The user message is either the plain text to process, or it contains up to three labelled blocks:
+- PRECEDING CONTEXT: the one or two Spanish chunks that come just before this text in the same work. They were already processed. Do NOT chunk, gloss or return them. Use them only to work out who dropped subjects and pronouns refer to, so the English gloss gets the right he/she/they/it. Spanish omits subject pronouns; the context tells you the subject.
+- LEXICON FACTS: verb forms in the text that a deterministic conjugation table has identified. These are authoritative GIVEN FACTS about mood and tense, not suggestions. Gloss each one accordingly (e.g. an imperfect subjunctive "aullaran" is "would howl / howled", never the future "will howl") and do not re-derive it.
+- TEXT TO PROCESS: the text you must chunk and gloss. Everything in your output comes from this block only.
+
 MOOD ANNOTATIONS (subjunctive highlighting):
 
 For each chunk, also return a mood_annotations array marking Spanish subjunctive verb forms and the mood triggers that license them. This drives a visual highlight that helps the reader notice subjunctive morphology. If a chunk has no subjunctive forms, return an empty mood_annotations array (or omit it).
 
 What to tag:
-- Every subjunctive VERB form: present, imperfect (both -ra and -se forms), present perfect, and pluperfect subjunctive. For perfect forms, tag the WHOLE verb phrase including the auxiliary (e.g. "haya llamado", "hubiera venido"). role = "subjunctive_verb".
+- Every subjunctive VERB form: present, imperfect (both -ra and -se forms), present perfect, and pluperfect subjunctive. For perfect forms, tag the WHOLE verb phrase including the auxiliary (e.g. "haya llamado", "hubiera venido"). role = "subjunctive_verb". Give its infinitive in "lemma" (e.g. "llamar" for "haya llamado", "ir" for "vaya").
 - The mood TRIGGER when it appears in the SAME chunk: a conjunction or verb + que, or a subordinator that governs the subjunctive (e.g. "quiero que", "dudo que", "es posible que", "para que", "sin que", "antes de que"). role = "trigger".
+
+Before tagging ANY trigger, first identify the verb it governs and confirm that verb is subjunctive. No subjunctive verb, no trigger.
 
 Pairing (pair_id):
 - A trigger and the verb(s) it licenses share the same integer pair_id. Number pair_ids starting at 1 within each chunk.
@@ -95,17 +134,20 @@ Pairing (pair_id):
 
 Special cases:
 - Negative imperatives ("no me digas") and independent subjunctive uses ("que te vaya bien", "¡viva!"): tag the verb, no trigger.
-- Two-mood triggers (aunque, cuando, quizás, mientras, relative clauses with indefinite antecedents): tag the pair ONLY when the verb is actually subjunctive. When the verb is indicative, tag NOTHING.
-- Do NOT tag indicative verbs, even right after a que or a two-mood trigger.
-- When you are uncertain whether a form is subjunctive in this context (homographs, ambiguous forms after quoted speech), OMIT it. A missed highlight is fine; a wrong one teaches wrong grammar.
+- Two-mood triggers (cuando, aunque, mientras, quizás, hasta que, si, después de que, relative clauses with indefinite antecedents, etc.) followed by an INDICATIVE verb get no tags at all — neither the trigger nor the verb. Example: "Cuando llegaba la comida, los seres humanos estaban callados" has NO subjunctive: llegaba and estaban are indicative. Tag nothing in it.
+- Do NOT tag indicative verbs, even right after a que or a two-mood trigger. A nearby trigger word does not make the next verb subjunctive: check the verb's own ending ("se recuperó", "portas", "aullarán" are indicative).
+
+Uncertainty:
+- Uncertain whether a TRIGGER applies: omit it.
+- Uncertain whether a VERB form is subjunctive in this context (e.g. homographs like "coma", "vaya", "cante", which can also be nouns or interjections): tag it with role = "possible_subjunctive" (with lemma and pair_id) instead of "subjunctive_verb". Never pair a trigger with a possible_subjunctive verb.
 
 Each annotation's "span" MUST be copied verbatim from this chunk's tlText, exactly as it appears (same accents, capitalization, and spacing), so it can be located in the text.
 
 MOOD EXAMPLE — for the chunk tlText "No creo que llames antes de que él llegue":
 - { span: "No creo que", role: "trigger", pair_id: 1 }
-- { span: "llames", role: "subjunctive_verb", pair_id: 1 }
+- { span: "llames", role: "subjunctive_verb", pair_id: 1, lemma: "llamar" }
 - { span: "antes de que", role: "trigger", pair_id: 2 }
-- { span: "llegue", role: "subjunctive_verb", pair_id: 2 }
+- { span: "llegue", role: "subjunctive_verb", pair_id: 2, lemma: "llegar" }
 
 Call split_and_gloss with your output. Do not include any text outside the tool call.`;
 
@@ -148,13 +190,18 @@ export const TOOL_INPUT_SCHEMA = {
                 },
                 role: {
                   type: 'string',
-                  enum: ['trigger', 'subjunctive_verb'],
-                  description: 'Whether this span is a mood trigger or the subjunctive verb it licenses.',
+                  enum: ['trigger', 'subjunctive_verb', 'possible_subjunctive'],
+                  description:
+                    'A mood trigger, a subjunctive verb, or a verb you are unsure is subjunctive here.',
                 },
                 pair_id: {
                   type: 'integer',
                   description:
                     'Links a trigger to the verb(s) it licenses (shared id). A verb with no trigger gets its own id.',
+                },
+                lemma: {
+                  type: 'string',
+                  description: 'Verb roles only: the infinitive of the verb (e.g. "llamar").',
                 },
               },
               required: ['span', 'role', 'pair_id'],
@@ -188,14 +235,44 @@ export function resolveMoodAnnotations(
     const span = (a as { span?: unknown }).span;
     const role = (a as { role?: unknown }).role;
     const pairId = (a as { pair_id?: unknown }).pair_id;
+    const lemma = (a as { lemma?: unknown }).lemma;
     if (typeof span !== 'string' || span.length === 0) continue;
-    if (role !== 'trigger' && role !== 'subjunctive_verb') continue;
+    if (role !== 'trigger' && role !== 'subjunctive_verb' && role !== 'possible_subjunctive') {
+      continue;
+    }
     if (typeof pairId !== 'number' || !Number.isFinite(pairId)) continue;
     const start = tlText.indexOf(span);
     if (start < 0) continue;
-    resolved.push({ start, end: start + span.length, role, pairId: Math.trunc(pairId) });
+    resolved.push({
+      start,
+      end: start + span.length,
+      role,
+      pairId: Math.trunc(pairId),
+      ...(role !== 'trigger' && typeof lemma === 'string' && lemma.length > 0 ? { lemma } : {}),
+    });
   }
   return resolved.length > 0 ? resolved : undefined;
+}
+
+// Build the user message: the text to process, plus the optional preceding
+// context (item 8: pronoun resolution — preceding text only, never later text)
+// and lexicon facts (item 5). With neither, the text is sent bare, exactly as
+// before v6.
+export function buildUserMessage(
+  text: string,
+  context: ReadonlyArray<string>,
+  lexiconFacts: string,
+): string {
+  if (context.length === 0 && lexiconFacts.length === 0) return text;
+  const parts: string[] = [];
+  if (context.length > 0) {
+    parts.push(`PRECEDING CONTEXT (do not translate or return):\n<<<\n${context.join(' ')}\n>>>`);
+  }
+  if (lexiconFacts.length > 0) {
+    parts.push(`LEXICON FACTS (authoritative):\n${lexiconFacts}`);
+  }
+  parts.push(`TEXT TO PROCESS:\n<<<\n${text}\n>>>`);
+  return parts.join('\n\n');
 }
 
 // Validate a raw tool-use response into a known shape. Either the client or
@@ -212,13 +289,18 @@ export function validateChunksFromToolUse(input: unknown): ReadonlyArray<ChunkAn
   const raw = (input as { chunks: ReadonlyArray<unknown> }).chunks;
   const validated: ChunkAndGloss[] = [];
   for (const c of raw) {
+    // Mirrors the edge function: one malformed chunk fails the whole
+    // response, rather than being skipped (which silently drops text).
     if (
-      typeof c === 'object' &&
-      c !== null &&
-      typeof (c as { tlText?: unknown }).tlText === 'string' &&
-      typeof (c as { englishGloss?: unknown }).englishGloss === 'string' &&
-      typeof (c as { sentenceIndex?: unknown }).sentenceIndex === 'number'
+      typeof c !== 'object' ||
+      c === null ||
+      typeof (c as { tlText?: unknown }).tlText !== 'string' ||
+      typeof (c as { englishGloss?: unknown }).englishGloss !== 'string' ||
+      typeof (c as { sentenceIndex?: unknown }).sentenceIndex !== 'number'
     ) {
+      throw new Error('Tool response contained a malformed chunk.');
+    }
+    {
       const v = c as { tlText: string; englishGloss: string; sentenceIndex: number };
       const moodAnnotations = resolveMoodAnnotations(
         v.tlText,

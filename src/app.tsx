@@ -1,14 +1,20 @@
 import type { ReactElement } from 'react';
 import { useEffect, useReducer, useRef, useState } from 'react';
+import { detectSourceLanguage } from '../supabase/functions/_shared/language';
 import {
   addPassage,
   assertNever,
   emptyLearnerState,
   IdGen,
+  precedingContext,
+  replaceChunk,
+  shiftedPieces,
   splitLyricsIntoLines,
   splitSentences,
+  unavailableChunk,
 } from './core';
-import { splitAndGloss } from './llm';
+import { ChunkAndGloss, splitAndGloss } from './llm';
+import { LexiconDisagreement } from './prompt';
 import { loadLearnerState } from './storage';
 import {
   AuthSession,
@@ -20,6 +26,7 @@ import {
   fetchLearnerState,
   fetchPassages,
   getCurrentSession,
+  insertMoodReviewEvents,
   insertPassages,
   signInWithPassword,
   subscribeAuth,
@@ -106,19 +113,35 @@ export interface UiState {
   // opening one closes the other so the user never juggles two bottom sheets
   // on mobile.
   readonly grammarPanel: GrammarPanelUiState | null;
+  // Bumped by every replay. The Spanish speech effects list it as a dependency
+  // so a replay restarts the utterance even when no phase flag changes — e.g.
+  // replaying mid-audio in reveal mode's hidden phase.
+  readonly speechNonce: number;
+  // A manual "retry translation" on an unavailable chunk, if one is in flight
+  // or just failed. One at a time.
+  readonly chunkRetry: ChunkRetryUiState | null;
+}
+
+// Fields every word-lookup state carries, computed at tap time from the chunk
+// text: the trigger tense note (item 7; null unless a trigger was tapped) and
+// the three-word window spoken when the definition appears (item 9).
+interface WordLookupBase {
+  readonly word: string;
+  readonly chunkId: ChunkId;
+  readonly tenseNote: string | null;
+  readonly speechWindow: string;
 }
 
 export type WordLookupUiState =
-  | { readonly kind: 'loading'; readonly word: string; readonly chunkId: ChunkId }
+  | (WordLookupBase & { readonly kind: 'loading' })
+  | (WordLookupBase & { readonly kind: 'ready'; readonly definition: WordDefinition })
+  | (WordLookupBase & { readonly kind: 'error'; readonly message: string });
+
+export type ChunkRetryUiState =
+  | { readonly kind: 'loading'; readonly passageId: PassageId; readonly chunkId: ChunkId }
   | {
-      readonly kind: 'ready';
-      readonly word: string;
-      readonly chunkId: ChunkId;
-      readonly definition: WordDefinition;
-    }
-  | {
-      readonly kind: 'error';
-      readonly word: string;
+      readonly kind: 'failed';
+      readonly passageId: PassageId;
       readonly chunkId: ChunkId;
       readonly message: string;
     };
@@ -165,13 +188,16 @@ export type AppAction =
       readonly passageId: PassageId;
       readonly message: string;
     }
-  | {
-      readonly kind: 'skip-batch';
-      readonly passageId: PassageId;
-      readonly placeholderChunk: Chunk;
-      readonly processedSentenceCount: number;
-    }
   | { readonly kind: 'retry-passage-processing'; readonly passageId: PassageId }
+  // Manual "retry translation" on one unavailable chunk (item 6).
+  | { readonly kind: 'retry-chunk'; readonly passageId: PassageId; readonly chunkId: ChunkId }
+  | {
+      readonly kind: 'retry-chunk-result';
+      readonly passageId: PassageId;
+      readonly chunkId: ChunkId;
+      readonly chunks: ReadonlyArray<Chunk>;
+    }
+  | { readonly kind: 'retry-chunk-failed'; readonly chunkId: ChunkId; readonly message: string }
   | { readonly kind: 'cancel-processing' }
   | { readonly kind: 'listening-hidden-spanish-finished'; readonly chunkId: ChunkId }
   | { readonly kind: 'spanish-tts-finished'; readonly chunkId: ChunkId }
@@ -203,6 +229,10 @@ export type AppAction =
   // SPEAKING (readAloudOnAdvance on) or advances immediately; during SPEAKING it
   // skips the rest of the audio and advances now.
   | { readonly kind: 'reading-continue' }
+  // Reveal mode's single forward control. READ (text visible, silent) → LISTEN
+  // (text hidden, audio plays) → REVEALED (text back, English behind a tap) →
+  // next chunk. Tapped during LISTEN it skips the rest of the audio.
+  | { readonly kind: 'reveal-continue' }
   | { readonly kind: 'open-passage'; readonly passageId: PassageId; readonly now: number }
   | { readonly kind: 'delete-passage'; readonly passageId: PassageId }
   | { readonly kind: 'rename-passage'; readonly passageId: PassageId; readonly title: string }
@@ -251,7 +281,13 @@ export type AppAction =
   | { readonly kind: 'set-english-tts-voice'; readonly voiceName: string | null }
   | { readonly kind: 'toggle-settings' }
   | { readonly kind: 'reset-to-paste' }
-  | { readonly kind: 'lookup-word'; readonly word: string; readonly chunkId: ChunkId }
+  | {
+      readonly kind: 'lookup-word';
+      readonly word: string;
+      readonly chunkId: ChunkId;
+      readonly tenseNote: string | null;
+      readonly speechWindow: string;
+    }
   | {
       readonly kind: 'lookup-word-result';
       readonly word: string;
@@ -306,6 +342,8 @@ function freshUiState(view: View): UiState {
     activeBatchFetch: null,
     wordLookup: null,
     grammarPanel: null,
+    speechNonce: 0,
+    chunkRetry: null,
   };
 }
 
@@ -553,43 +591,50 @@ function reducer(state: AppState, action: AppAction): AppState {
       };
     }
 
-    case 'skip-batch': {
-      // The translation service refused this batch. Insert a single
-      // placeholder chunk so the reader sees something was skipped, advance
-      // processedSentenceCount past the refused sentences, and keep the
-      // passage status as in-progress so the next batch is still tried.
+    case 'retry-chunk':
+      // One manual retry at a time; a second tap while loading is ignored.
+      if (state.ui.chunkRetry?.kind === 'loading') return state;
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          chunkRetry: { kind: 'loading', passageId: action.passageId, chunkId: action.chunkId },
+        },
+      };
+
+    case 'retry-chunk-result': {
       const existing = state.learner.passages[action.passageId];
-      if (!existing) {
-        return { ...state, ui: { ...state.ui, activeBatchFetch: null } };
-      }
-      const newChunks = [...existing.chunks, action.placeholderChunk];
-      const isComplete = action.processedSentenceCount >= existing.sentenceCount;
-      const newStatus: ProcessingStatus = isComplete
-        ? { kind: 'complete' }
-        : {
-            kind: 'in-progress',
-            processedSentenceCount: action.processedSentenceCount,
-          };
-      const shouldTransition =
-        state.ui.view === 'processing' &&
-        state.ui.currentPassageId === action.passageId &&
-        newChunks.length > 0;
+      const retry = state.ui.chunkRetry;
+      const cleared = { ...state.ui, chunkRetry: retry?.chunkId === action.chunkId ? null : retry };
+      if (!existing) return { ...state, ui: cleared };
+      const at = existing.chunks.findIndex((c) => c.id === action.chunkId);
+      const updated = replaceChunk(existing, action.chunkId, action.chunks);
+      // Retrying the chunk being read replaces it under the reader: start its
+      // phases fresh so the new text plays/reveals from the beginning.
+      const isCurrent =
+        state.ui.currentPassageId === action.passageId && existing.lastReadChunkIndex === at;
       return {
         learner: {
           ...state.learner,
-          passages: {
-            ...state.learner.passages,
-            [action.passageId]: {
-              ...existing,
-              chunks: newChunks,
-              processingStatus: newStatus,
-            },
-          },
+          passages: { ...state.learner.passages, [action.passageId]: updated },
         },
+        ui: isCurrent ? { ...cleared, ...freshPhaseFlags() } : cleared,
+      };
+    }
+
+    case 'retry-chunk-failed': {
+      const retry = state.ui.chunkRetry;
+      if (!retry || retry.chunkId !== action.chunkId) return state;
+      return {
+        ...state,
         ui: {
           ...state.ui,
-          view: shouldTransition ? 'reading' : state.ui.view,
-          activeBatchFetch: null,
+          chunkRetry: {
+            kind: 'failed',
+            passageId: retry.passageId,
+            chunkId: retry.chunkId,
+            message: action.message,
+          },
         },
       };
     }
@@ -703,11 +748,29 @@ function reducer(state: AppState, action: AppAction): AppState {
     }
 
     case 'replay-current':
+      // Reveal mode: replay means "play the audio again, text hidden" — back
+      // into the LISTEN phase, not back to the silent READ phase (which would
+      // make ↻ / R do nothing audible). Clears a pause so the audio plays.
+      if (state.learner.settings.readingMode === 'reveal') {
+        return {
+          ...state,
+          ui: {
+            ...state.ui,
+            ...freshPhaseFlags(),
+            readingSpeaking: true,
+            isPaused: false,
+            wordLookup: null,
+            grammarPanel: null,
+            speechNonce: state.ui.speechNonce + 1,
+          },
+        };
+      }
       return {
         ...state,
         ui: {
           ...state.ui,
           ...freshPhaseFlags(),
+          speechNonce: state.ui.speechNonce + 1,
         },
       };
 
@@ -840,6 +903,32 @@ function reducer(state: AppState, action: AppAction): AppState {
       // readAloudOnAdvance off: advance immediately (freshPhaseFlags hides the
       // English on the next chunk).
       return advanceToNextChunk(state);
+    }
+
+    case 'reveal-continue': {
+      // Phases are derived from the existing per-chunk flags:
+      //   READ     = !readingSpeaking && !spanishTtsDone
+      //   LISTEN   =  readingSpeaking && !spanishTtsDone  (text hidden)
+      //   REVEALED =  spanishTtsDone                      (English behind a tap)
+      const { readingSpeaking, spanishTtsDone } = state.ui;
+      if (spanishTtsDone) return advanceToNextChunk(state);
+      if (readingSpeaking) {
+        // Skip the rest of the audio and bring the text back. The Spanish
+        // speech effect cancels the in-flight utterance when this flips.
+        return { ...state, ui: { ...state.ui, spanishTtsDone: true } };
+      }
+      // READ → LISTEN. Clear a pause left by a word lookup and close panels.
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          readingSpeaking: true,
+          englishRevealed: false,
+          isPaused: false,
+          wordLookup: null,
+          grammarPanel: null,
+        },
+      };
     }
 
     case 'reveal-english':
@@ -1097,7 +1186,13 @@ function reducer(state: AppState, action: AppAction): AppState {
         ui: {
           ...state.ui,
           isPaused: true,
-          wordLookup: { kind: 'loading', word: action.word, chunkId: action.chunkId },
+          wordLookup: {
+            kind: 'loading',
+            word: action.word,
+            chunkId: action.chunkId,
+            tenseNote: action.tenseNote,
+            speechWindow: action.speechWindow,
+          },
           grammarPanel: null,
         },
       };
@@ -1117,12 +1212,7 @@ function reducer(state: AppState, action: AppAction): AppState {
         ...state,
         ui: {
           ...state.ui,
-          wordLookup: {
-            kind: 'ready',
-            word: action.word,
-            chunkId: action.chunkId,
-            definition: action.definition,
-          },
+          wordLookup: { ...lu, kind: 'ready', definition: action.definition },
         },
       };
     }
@@ -1141,12 +1231,7 @@ function reducer(state: AppState, action: AppAction): AppState {
         ...state,
         ui: {
           ...state.ui,
-          wordLookup: {
-            kind: 'error',
-            word: action.word,
-            chunkId: action.chunkId,
-            message: action.message,
-          },
+          wordLookup: { ...lu, kind: 'error', message: action.message },
         },
       };
     }
@@ -1272,6 +1357,111 @@ export function buildEmptyPassage(
     folder: options.folder ?? null,
     subfolder: null,
   };
+}
+
+// A lexicon disagreement tied to the chunk it came from, ready for the mood
+// review log.
+interface ReviewRow {
+  readonly chunkId: ChunkId;
+  readonly chunkText: string;
+  readonly disagreement: LexiconDisagreement;
+}
+
+interface GlossTarget {
+  readonly passageId: PassageId;
+  readonly chunkingMode: ChunkingMode;
+  // Index the first produced chunk takes in the passage.
+  readonly startIndex: number;
+  // Global sentence index of the text's first sentence; the model's 0-based
+  // sentenceIndex is shifted up by it.
+  readonly sentenceIndex: number;
+  // How many sentences the text may span (the model's index is clamped to
+  // this). Infinity for a fresh batch; bounded when replacing a chunk in place.
+  readonly sentenceSpan: number;
+  readonly precededByBlankLine: boolean;
+  // Spanish of the preceding chunks, for pronoun resolution (item 8).
+  readonly context: ReadonlyArray<string>;
+}
+
+// Send one piece of text through chunk-and-gloss and turn the response into
+// Chunks. Shared by the batch fetcher and the per-chunk retry. Throws
+// ContentRefusedError when both models failed on the content.
+async function glossToChunks(
+  text: string,
+  target: GlossTarget,
+): Promise<{ chunks: Chunk[]; reviewRows: ReviewRow[] }> {
+  const raw = await splitAndGloss(text, {
+    chunkingMode: target.chunkingMode,
+    context: target.context,
+  });
+  // Filter out chunks whose Spanish text contains no letters or digits (just
+  // punctuation like "." or "—"). Claude occasionally emits these as
+  // standalone chunks; they have no audio or learning value and render as
+  // empty rows.
+  const data = raw.filter((cg) => /[\p{L}\p{N}]/u.test(cg.tlText));
+  const reviewRows: ReviewRow[] = [];
+  const rowsFor = (chunk: Chunk, cgs: ReadonlyArray<ChunkAndGloss>) => {
+    for (const cg of cgs) {
+      for (const disagreement of cg.lexiconDisagreements ?? []) {
+        reviewRows.push({ chunkId: chunk.id, chunkText: chunk.tlText, disagreement });
+      }
+    }
+  };
+
+  if (data.length === 0) return { chunks: [], reviewRows };
+
+  // Lyrics: a source line is the atomic unit. Collapse the model's response
+  // for this one line into exactly ONE chunk — the whole Spanish line beside
+  // the whole line's English meaning. Alignment then can't drift across
+  // sub-chunks no matter how the model split its answer (the edge function is
+  // also told to return a single chunk, so this is usually a 1-element join).
+  if (target.chunkingMode === 'lyrics') {
+    // The line's sub-chunks are joined with a single space into one chunk, so
+    // each sub-chunk's mood-annotation offsets shift by the running length
+    // (tlText + 1 for the join space). In the usual case the model returns a
+    // single sub-chunk and the shift is a no-op.
+    const lyricMoods: MoodAnnotation[] = [];
+    let moodOffset = 0;
+    for (const cg of data) {
+      for (const a of cg.moodAnnotations ?? []) {
+        lyricMoods.push({ ...a, start: a.start + moodOffset, end: a.end + moodOffset });
+      }
+      moodOffset += cg.tlText.length + 1;
+    }
+    const chunk: Chunk = {
+      id: ids.newChunkId(),
+      passageId: target.passageId,
+      index: target.startIndex,
+      sentenceIndex: target.sentenceIndex,
+      tlText: data.map((cg) => cg.tlText).join(' '),
+      englishGloss: data.map((cg) => cg.englishGloss).join(' '),
+      audioRef: null,
+      ...(target.precededByBlankLine ? { precededByBlankLine: true } : {}),
+      ...(lyricMoods.length > 0 ? { moodAnnotations: lyricMoods } : {}),
+    };
+    rowsFor(chunk, data);
+    return { chunks: [chunk], reviewRows };
+  }
+
+  // Prose keeps per-sentence sub-chunking, shifting the model's 0..N-1
+  // sentenceIndex up to the global index.
+  const maxOffset = Math.max(0, target.sentenceSpan - 1);
+  const chunks = data.map((cg, i): Chunk => {
+    const chunk: Chunk = {
+      id: ids.newChunkId(),
+      passageId: target.passageId,
+      index: target.startIndex + i,
+      sentenceIndex: target.sentenceIndex + Math.min(cg.sentenceIndex, maxOffset),
+      tlText: cg.tlText,
+      englishGloss: cg.englishGloss,
+      audioRef: null,
+      ...(i === 0 && target.precededByBlankLine ? { precededByBlankLine: true } : {}),
+      ...(cg.moodAnnotations ? { moodAnnotations: cg.moodAnnotations } : {}),
+    };
+    rowsFor(chunk, [cg]);
+    return chunk;
+  });
+  return { chunks, reviewRows };
 }
 
 // === App component ===
@@ -1616,6 +1806,11 @@ export function App() {
     );
   }, [highlightSubjunctive]);
 
+  // The signed-in user, readable from async callbacks without making the
+  // batch-fetch effect depend on it (the review log needs the user id).
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+
   // Batch-fetch effect: drives lazy, incremental processing of a passage's
   // sentences. Fires whenever any of its inputs change. The guards inside
   // decide whether a fetch is actually needed; if not, the effect is a no-op.
@@ -1654,23 +1849,22 @@ export function App() {
     // joined string.
     const isLyrics = passage.chunkingMode === 'lyrics';
     let batchText: string;
-    let batchUnitCount: number;
+    let batchSentences: ReadonlyArray<string>;
     let precededByBlankLine = false;
     if (isLyrics) {
       const lines = splitLyricsIntoLines(passage.rawText);
       const line = lines[processed];
       if (!line) return;
       batchText = line.text;
-      batchUnitCount = 1;
+      batchSentences = [line.text];
       precededByBlankLine = line.precededByBlankLine;
     } else {
       const sentences = splitSentences(passage.rawText);
-      const batchSentences = sentences.slice(processed, processed + SENTENCES_PER_BATCH);
+      batchSentences = sentences.slice(processed, processed + SENTENCES_PER_BATCH);
       if (batchSentences.length === 0) return;
       batchText = batchSentences.join(' ');
-      batchUnitCount = batchSentences.length;
     }
-    const newProcessedCount = processed + batchUnitCount;
+    const newProcessedCount = processed + batchSentences.length;
     // Sub-chunks inside this batch will get sentenceIndex 0..N-1 from the
     // LLM. Shift them up by the count of sentences already processed so the
     // global sentence indexing remains correct across batches.
@@ -1680,18 +1874,68 @@ export function App() {
     dispatch({ kind: 'start-batch-fetch', passageId });
 
     void (async () => {
-      try {
-        const chunkDataRaw = await splitAndGloss(batchText, {
+      const produced: Chunk[] = [];
+      // Gloss one piece of text and append its chunks to `produced`. Each call
+      // carries the Spanish of the two chunks before it as pronoun context.
+      const glossPiece = async (text: string, sentenceIndex: number, blankLine: boolean) => {
+        const result = await glossToChunks(text, {
+          passageId,
           chunkingMode: passage.chunkingMode,
+          startIndex: startIndex + produced.length,
+          sentenceIndex,
+          sentenceSpan: Infinity,
+          precededByBlankLine: blankLine,
+          context: precedingContext([...passage.chunks, ...produced], startIndex + produced.length),
         });
-        // Filter out chunks whose Spanish text contains no letters or digits
-        // (just punctuation like "." or "—"). Claude occasionally emits these
-        // as standalone chunks; they have no audio or learning value and
-        // render as empty rows.
-        const chunkData = chunkDataRaw.filter((cg) =>
-          /[\p{L}\p{N}]/u.test(cg.tlText),
+        produced.push(...result.chunks);
+        logReviewRows(passageId, result.reviewRows);
+      };
+      // A piece the pipeline gave up on: kept as source text, never dropped.
+      const keepUntranslated = (text: string, sentenceIndex: number, blankLine: boolean) => {
+        produced.push(
+          unavailableChunk(
+            {
+              id: ids.newChunkId(),
+              passageId,
+              index: startIndex + produced.length,
+              sentenceIndex,
+              audioRef: null,
+              ...(blankLine ? { precededByBlankLine: true } : {}),
+            },
+            text,
+          ),
         );
-        if (chunkData.length === 0) {
+      };
+
+      try {
+        try {
+          await glossPiece(batchText, sentenceOffset, precededByBlankLine);
+        } catch (e) {
+          if (!(e instanceof ContentRefusedError)) throw e;
+          // Both models failed on this content (the server already retried on
+          // Sonnet). A Spanish source only lacks its gloss, so keep the Spanish
+          // and move on. An English source is a hole in the book: retry ONCE
+          // with shifted chunk boundaries, then stop — no loops.
+          const pieces =
+            !isLyrics && detectSourceLanguage(batchText) === 'en'
+              ? shiftedPieces(batchSentences)
+              : null;
+          if (pieces === null) {
+            keepUntranslated(batchText, sentenceOffset, precededByBlankLine);
+          } else {
+            produced.length = 0;
+            for (const piece of pieces) {
+              const at = sentenceOffset + piece.sentenceOffset;
+              try {
+                await glossPiece(piece.text, at, false);
+              } catch (pieceErr) {
+                if (!(pieceErr instanceof ContentRefusedError)) throw pieceErr;
+                keepUntranslated(piece.text, at, false);
+              }
+            }
+          }
+        }
+        if (produced.length === 0) {
           dispatch({
             kind: 'mark-passage-error',
             passageId,
@@ -1699,86 +1943,13 @@ export function App() {
           });
           return;
         }
-        // Lyrics: a source line is the atomic unit. Collapse the model's
-        // response for this one line into exactly ONE chunk — the whole
-        // Spanish line beside the whole line's English meaning. Alignment then
-        // can't drift across sub-chunks no matter how the model split its
-        // answer (the edge function is also told to return a single chunk, so
-        // this is usually a 1-element join). sentenceIndex is the line's
-        // global index, so each line renders as its own row with its own
-        // stanza-break flag. Prose keeps per-sentence sub-chunking, shifting
-        // the model's 0..N-1 sentenceIndex up by the count already processed.
-        let newChunks: Chunk[];
-        if (isLyrics) {
-          // The line's sub-chunks are joined with a single space into one
-          // chunk, so each sub-chunk's mood-annotation offsets shift by the
-          // running length (tlText + 1 for the join space). In the usual case
-          // the model returns a single sub-chunk and the shift is a no-op.
-          const lyricMoods: MoodAnnotation[] = [];
-          let moodOffset = 0;
-          for (const cg of chunkData) {
-            if (cg.moodAnnotations) {
-              for (const a of cg.moodAnnotations) {
-                lyricMoods.push({ ...a, start: a.start + moodOffset, end: a.end + moodOffset });
-              }
-            }
-            moodOffset += cg.tlText.length + 1;
-          }
-          newChunks = [
-            {
-              id: ids.newChunkId(),
-              passageId,
-              index: startIndex,
-              sentenceIndex: processed,
-              tlText: chunkData.map((cg) => cg.tlText).join(' '),
-              englishGloss: chunkData.map((cg) => cg.englishGloss).join(' '),
-              audioRef: null,
-              ...(precededByBlankLine ? { precededByBlankLine: true } : {}),
-              ...(lyricMoods.length > 0 ? { moodAnnotations: lyricMoods } : {}),
-            },
-          ];
-        } else {
-          newChunks = chunkData.map((cg, i) => ({
-            id: ids.newChunkId(),
-            passageId,
-            index: startIndex + i,
-            sentenceIndex: sentenceOffset + cg.sentenceIndex,
-            tlText: cg.tlText,
-            englishGloss: cg.englishGloss,
-            audioRef: null,
-            ...(cg.moodAnnotations ? { moodAnnotations: cg.moodAnnotations } : {}),
-          }));
-        }
         dispatch({
           kind: 'append-chunks',
           passageId,
-          chunks: newChunks,
+          chunks: produced,
           processedSentenceCount: newProcessedCount,
         });
       } catch (e) {
-        if (e instanceof ContentRefusedError) {
-          // The translation service refused this batch (likely on content
-          // grounds). Insert a placeholder chunk so the reader sees the
-          // skip, advance past the refused sentences, and let the next
-          // batch try its luck — refusal is per-batch, not per-passage.
-          const placeholderChunk: Chunk = {
-            id: ids.newChunkId(),
-            passageId,
-            index: startIndex,
-            sentenceIndex: sentenceOffset,
-            tlText: '[…]',
-            englishGloss: '[Skipped — translation service declined this section]',
-            audioRef: null,
-            ...(precededByBlankLine ? { precededByBlankLine: true } : {}),
-          };
-          dispatch({
-            kind: 'skip-batch',
-            passageId,
-            placeholderChunk,
-            processedSentenceCount: newProcessedCount,
-          });
-          return;
-        }
         const msg = e instanceof Error ? e.message : String(e);
         dispatch({ kind: 'mark-passage-error', passageId, message: msg });
       }
@@ -1789,6 +1960,58 @@ export function App() {
     state.learner.passages,
     dispatch,
   ]);
+
+  // Chunk-retry effect: a manual "retry translation" on an unavailable chunk
+  // (item 6). Re-sends the chunk's source text (Spanish for a missing gloss,
+  // English for a missing translation) with its preceding context, and swaps
+  // the result in for the chunk. Reads passages through a ref so an unrelated
+  // passage update mid-call doesn't cancel and re-fire the request.
+  const passagesRef = useRef(state.learner.passages);
+  passagesRef.current = state.learner.passages;
+  const chunkRetry = state.ui.chunkRetry;
+  useEffect(() => {
+    if (!chunkRetry || chunkRetry.kind !== 'loading') return;
+    const { passageId, chunkId } = chunkRetry;
+    const passage = passagesRef.current[passageId];
+    const at = passage?.chunks.findIndex((c) => c.id === chunkId) ?? -1;
+    const chunk = passage?.chunks[at];
+    if (!passage || !chunk) {
+      dispatch({ kind: 'retry-chunk-failed', chunkId, message: "Couldn't find that chunk." });
+      return;
+    }
+    const next = passage.chunks[at + 1];
+    void (async () => {
+      try {
+        const result = await glossToChunks(chunk.tlText, {
+          passageId,
+          chunkingMode: passage.chunkingMode,
+          startIndex: chunk.index,
+          sentenceIndex: chunk.sentenceIndex,
+          // Keep the replacement inside the sentences the chunk covered, so it
+          // can't merge into the next sentence's group.
+          sentenceSpan: next ? Math.max(1, next.sentenceIndex - chunk.sentenceIndex) : Infinity,
+          precededByBlankLine: chunk.precededByBlankLine === true,
+          context: precedingContext(passage.chunks, at),
+        });
+        logReviewRows(passageId, result.reviewRows);
+        dispatch({ kind: 'retry-chunk-result', passageId, chunkId, chunks: result.chunks });
+      } catch (e) {
+        const message =
+          e instanceof ContentRefusedError
+            ? 'Still could not translate this section.'
+            : e instanceof Error
+              ? e.message
+              : String(e);
+        dispatch({ kind: 'retry-chunk-failed', chunkId, message });
+      }
+    })();
+  }, [chunkRetry, dispatch]);
+
+  // Write lexicon disagreements to the mood review log (item 5).
+  function logReviewRows(passageId: PassageId, rows: ReadonlyArray<ReviewRow>): void {
+    const s = sessionRef.current;
+    if (s) insertMoodReviewEvents(s.userId, passageId, rows);
+  }
 
   // Bootstrap gates: render different views during auth + library load.
   if (authStatus === 'loading') {

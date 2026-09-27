@@ -1313,6 +1313,10 @@ button.ghost {
    trigger and the verb it licenses share a hue; the verb is the saturated one
    because the verb is the form the reader is meant to notice.
 
+   A possible_subjunctive verb (an uncertain homograph like "coma") carries
+   .mood-trigger .mood-possible, so it gets the muted trigger tint: "maybe",
+   never the confident verb highlight. No separate rule needed.
+
    Painted as a background-IMAGE, not background-color. Two reasons:
    .word-clickable's hover/active rules set the `background` SHORTHAND, which
    resets background-image — but those rules are less specific than the gated
@@ -1574,6 +1578,60 @@ html[data-theme='high-contrast']:not([data-highlight-subjunctive='off']) .mood-v
   color: var(--text);
   opacity: 0.85;
   font-style: italic;
+}
+
+/* Trigger tap: how the trigger's tense sets the subjunctive's. Same panel
+   styling family as the verb block, so it reads as part of the definition. */
+.lookup-tense-note {
+  margin: 0.4rem 0 0.2rem;
+  padding: 0.5rem 0.6rem;
+  background: rgba(91, 141, 239, 0.08);
+  border-left: 3px solid #5b8def;
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+/* ===== Untranslated chunks =====
+   A chunk the pipeline gave up on shows its source text followed by a plain
+   "[not translated]" label and a retry action — never an omission. */
+.not-translated {
+  color: var(--text-secondary);
+  font-style: italic;
+  white-space: nowrap;
+}
+
+.untranslated-source {
+  color: var(--text-secondary);
+}
+
+.retry-translation {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.retry-translation-btn {
+  font-family: inherit;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.55rem;
+  border: 1px solid var(--text-secondary);
+  border-radius: 999px;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.retry-translation-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.retry-translation-error {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
 }
 
 /* ===== Mobile word-lookup + grammar bottom sheet =====

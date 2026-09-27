@@ -88,14 +88,41 @@ export interface Passage {
 // offsets into the chunk's tlText, resolved server-side from the model's raw
 // span output (see chunk-and-gloss). A verb may appear with no trigger in the
 // same chunk — it still gets its own pairId (see edge cases in the task doc).
-export type MoodRole = 'trigger' | 'subjunctive_verb';
+// 'possible_subjunctive' (v6+) is a verb the lexicon confirms is a subjunctive
+// form but that is also a homograph (coma, vaya, cante) the model wasn't sure
+// of; it renders in the muted trigger style and never licenses a trigger.
+export type MoodRole = 'trigger' | 'subjunctive_verb' | 'possible_subjunctive';
+
+export type SubjTense =
+  | 'present'
+  | 'imperfect-ra'
+  | 'imperfect-se'
+  | 'perfect'
+  | 'pluperfect-ra'
+  | 'pluperfect-se';
 
 export interface MoodAnnotation {
   readonly start: number;
   readonly end: number;
   readonly role: MoodRole;
   readonly pairId: number;
+  // Verb roles, v6+: the lemma and the lexicon's tense for the form. The tense
+  // drives the trigger tap note (present frame vs past frame). Absent on v5
+  // chunks.
+  readonly lemma?: string;
+  readonly tense?: SubjTense;
 }
+
+// Why a chunk has no translation, when the pipeline gave up on it (after the
+// Haiku → Sonnet retry, plus shifted boundaries for English sources):
+//   'gloss'       — Spanish source. tlText is the Spanish as usual; there is
+//                   just no English gloss. Word-tap and TTS work normally.
+//   'translation' — English source. There is no Spanish at all: tlText holds
+//                   the ENGLISH source text, rendered as-is with word-tap, TTS
+//                   and mood annotations disabled.
+// Either way the reader sees the original text followed by "[not translated]"
+// and a retry action — never an omission.
+export type ChunkUnavailable = 'gloss' | 'translation';
 
 export interface Chunk {
   readonly id: ChunkId;
@@ -115,6 +142,10 @@ export interface Chunk {
   // treats absent/empty as "nothing to highlight". Backward-compatible like
   // precededByBlankLine.
   readonly moodAnnotations?: ReadonlyArray<MoodAnnotation>;
+  // Set when translation failed for this chunk; see ChunkUnavailable. Absent on
+  // normal chunks. Replaces the old '[…]' placeholder chunk, which legacy
+  // passages still store and upgradeLegacyPlaceholders (core.ts) converts on load.
+  readonly unavailable?: ChunkUnavailable;
 }
 
 export type VocabItem =
@@ -213,7 +244,13 @@ export type EmphasisStyle = 'color' | 'bold' | 'both' | 'none';
 // reader works out meaning at their own pace (word tap + on-demand "Show
 // English"), then taps Continue. With readAloudOnAdvance on, the chunk's Spanish
 // audio plays once at the moment of advancing (the only audio this mode has).
-export type ReadingMode = 'scaffolded' | 'listening' | 'light' | 'reading';
+// 'reveal' (read, listen, reveal): the Spanish shows silently; Continue HIDES
+// it and plays the chunk audio (with a replay button); when the audio ends the
+// Spanish reappears and the English stays behind a Show English tap; Continue
+// then advances. Unlike 'reading' (text stays visible while the audio plays)
+// and 'light' (hides the English, never the Spanish), it tests the ear on text
+// the reader has just read.
+export type ReadingMode = 'scaffolded' | 'listening' | 'light' | 'reading' | 'reveal';
 
 export interface Settings {
   readonly dialect: 'es-MX' | 'es-ES' | 'es-neutral';
@@ -234,7 +271,7 @@ export interface Settings {
   // (English-identical words and proper names don't count; each digit of a
   // numeric run counts as a separate word). Set true to always re-read.
   readonly reReadShortChunks: boolean;
-  // Which of the four reading flows is active. See ReadingMode. Sticky: persisted
+  // Which of the five reading flows is active. See ReadingMode. Sticky: persisted
   // in the settings blob and synced across devices, so the last mode the user
   // picked carries over to the next session on any device (not reseeded on
   // sign-in). Replaces the former `listeningMode` boolean; legacy settings blobs

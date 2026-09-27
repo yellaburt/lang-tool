@@ -1,16 +1,21 @@
+import { detectSourceLanguage } from '../supabase/functions/_shared/language';
+import { isKnownLemma } from '../supabase/functions/_shared/subjunctive';
 import {
   ChapterSplit,
   Chunk,
   ChunkId,
   LearnerState,
+  MoodAnnotation,
   Passage,
   PassageId,
   Question,
+  ReadingMode,
   ReviewEvent,
   ReviewEventId,
   ReviewOutcome,
   Settings,
   SrsState,
+  SubjTense,
   VocabItem,
   VocabItemId,
 } from './types';
@@ -835,4 +840,253 @@ export function shouldInterleaveQuestion(
   settings: Settings,
 ): boolean {
   return chunksRevealedSinceLastQuestion >= settings.questionFrequency;
+}
+
+// === Reading modes ===
+
+// Does this mode play audio as part of reading? Used to decide whether a word
+// tap also speaks the word (item 9). 'reading' is text-first and silent while
+// the reader works; its only audio is at advance.
+export function modeHasAudio(mode: ReadingMode): boolean {
+  switch (mode) {
+    case 'scaffolded':
+    case 'listening':
+    case 'light':
+    case 'reveal':
+      return true;
+    case 'reading':
+      return false;
+    default:
+      return assertNever(mode);
+  }
+}
+
+// === Translation failures (task item 6) ===
+
+// v5 and earlier inserted this placeholder chunk when a batch was refused,
+// throwing the source text away. The placeholder is gone everywhere now.
+const LEGACY_PLACEHOLDER_TEXT = '[…]';
+// A refused v5 batch was always one batch: at most this many source units.
+const LEGACY_BATCH_SIZE = 2;
+
+function isLegacyPlaceholder(c: Chunk): boolean {
+  return c.tlText === LEGACY_PLACEHOLDER_TEXT && c.unavailable === undefined;
+}
+
+// Recover the source text behind legacy '[…]' placeholder chunks from the
+// passage's rawText (the placeholder carries its batch's first sentenceIndex;
+// the next chunk's sentenceIndex bounds it) and turn each into a proper
+// unavailable chunk, so old passages show "[not translated]" and can be
+// retried like new ones. Applied on load; persists on the passage's next write.
+export function upgradeLegacyPlaceholders(passage: Passage): Passage {
+  if (!passage.chunks.some(isLegacyPlaceholder)) return passage;
+  const units =
+    passage.chunkingMode === 'lyrics'
+      ? splitLyricsIntoLines(passage.rawText).map((l) => l.text)
+      : splitSentences(passage.rawText);
+  const chunks = passage.chunks.map((c, i) => {
+    if (!isLegacyPlaceholder(c)) return c;
+    const next = passage.chunks[i + 1];
+    const end =
+      passage.chunkingMode === 'lyrics'
+        ? c.sentenceIndex + 1
+        : Math.min(next ? next.sentenceIndex : Infinity, c.sentenceIndex + LEGACY_BATCH_SIZE);
+    const source = units.slice(c.sentenceIndex, Math.max(end, c.sentenceIndex + 1)).join(' ');
+    return unavailableChunk(c, source);
+  });
+  return { ...passage, chunks };
+}
+
+// Turn a chunk skeleton into an unavailable chunk carrying `source`. Which kind
+// depends on the source language: a Spanish source keeps its Spanish (only the
+// gloss is missing); an English source has no Spanish at all.
+export function unavailableChunk(
+  base: Omit<Chunk, 'tlText' | 'englishGloss' | 'unavailable' | 'moodAnnotations'>,
+  source: string,
+): Chunk {
+  const { id, passageId, index, sentenceIndex, audioRef, precededByBlankLine } = base;
+  return {
+    id,
+    passageId,
+    index,
+    sentenceIndex,
+    audioRef,
+    ...(precededByBlankLine ? { precededByBlankLine } : {}),
+    tlText: source,
+    englishGloss: null,
+    unavailable: detectSourceLanguage(source) === 'en' ? 'translation' : 'gloss',
+  };
+}
+
+// One piece of a batch re-cut with shifted boundaries. `sentenceOffset` is the
+// piece's first sentence relative to the batch's first sentence.
+export interface ShiftedPiece {
+  readonly text: string;
+  readonly sentenceOffset: number;
+}
+
+// Clause punctuation a single long sentence can be cut at.
+const CLAUSE_BREAK = /[,;:—–]\s+/g;
+
+// Re-cut a failed batch for the one shifted-boundary retry an English source
+// gets: a multi-sentence batch is split into single sentences; a single
+// sentence is cut in two at the clause break nearest its middle. Returns null
+// when there's no different way to cut it (a single sentence with no clause
+// punctuation) — the caller then gives up rather than resending the same text.
+export function shiftedPieces(sentences: ReadonlyArray<string>): ReadonlyArray<ShiftedPiece> | null {
+  if (sentences.length > 1) {
+    return sentences.map((text, i) => ({ text, sentenceOffset: i }));
+  }
+  const s = sentences[0];
+  if (s === undefined) return null;
+  const mid = s.length / 2;
+  let best: number | null = null;
+  for (const m of s.matchAll(CLAUSE_BREAK)) {
+    const cut = m.index + m[0].length;
+    if (cut >= s.length) continue;
+    if (best === null || Math.abs(cut - mid) < Math.abs(best - mid)) best = cut;
+  }
+  if (best === null) return null;
+  return [
+    { text: s.slice(0, best).trim(), sentenceOffset: 0 },
+    { text: s.slice(best).trim(), sentenceOffset: 0 },
+  ];
+}
+
+// Replace one chunk (a retried unavailable chunk) with its freshly processed
+// replacement(s), re-indexing everything after it. The reader's position stays
+// on the same text: if it was past the replaced chunk it shifts by the growth.
+export function replaceChunk(
+  passage: Passage,
+  chunkId: ChunkId,
+  replacements: ReadonlyArray<Chunk>,
+): Passage {
+  const at = passage.chunks.findIndex((c) => c.id === chunkId);
+  if (at < 0 || replacements.length === 0) return passage;
+  const chunks = [
+    ...passage.chunks.slice(0, at),
+    ...replacements,
+    ...passage.chunks.slice(at + 1),
+  ].map((c, index) => (c.index === index ? c : { ...c, index }));
+  const lastReadChunkIndex =
+    passage.lastReadChunkIndex > at
+      ? passage.lastReadChunkIndex + replacements.length - 1
+      : passage.lastReadChunkIndex;
+  return { ...passage, chunks, lastReadChunkIndex };
+}
+
+// Spanish of the (up to) two chunks before `beforeIndex`, sent with a gloss call
+// so the model can tell who a dropped subject refers to (item 8). Preceding
+// text only — never anything later in the book. Untranslated English-source
+// chunks are skipped: they aren't Spanish.
+export function precedingContext(
+  chunks: ReadonlyArray<Chunk>,
+  beforeIndex: number,
+): ReadonlyArray<string> {
+  return chunks
+    .slice(0, Math.max(0, beforeIndex))
+    .filter((c) => c.unavailable !== 'translation')
+    .slice(-2)
+    .map((c) => c.tlText);
+}
+
+// === Word tap (items 7 and 9) ===
+
+const WORD_RE = /[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+/g;
+
+// The text to speak when a word at [start, end) is tapped: the word before, the
+// word, and the word after, exactly as written (conjugated surface forms). A
+// neighbour is only included when nothing but whitespace separates it from the
+// tapped word, so the window never crosses punctuation or a sentence boundary.
+// Stays within the chunk — at a chunk edge the missing side is simply dropped.
+export function speechWindow(text: string, start: number, end: number): string {
+  const words = [...text.matchAll(WORD_RE)].map((m) => ({
+    start: m.index,
+    end: m.index + m[0].length,
+  }));
+  const k = words.findIndex((w) => w.start < end && start < w.end);
+  const tapped = words[k];
+  if (!tapped) return text.slice(start, end);
+  const joins = (a: { end: number }, b: { start: number }) =>
+    /^\s+$/.test(text.slice(a.end, b.start));
+  const prev = words[k - 1];
+  const next = words[k + 1];
+  const from = prev && joins(prev, tapped) ? prev.start : tapped.start;
+  const to = next && joins(tapped, next) ? next.end : tapped.end;
+  return text.slice(from, to);
+}
+
+// Words inside a trigger phrase that aren't its frame verb: conjunctions,
+// negation, pronouns, articles. What's left ("quería", "es", "creo") is the
+// verb whose tense sets the frame.
+const TRIGGER_FUNCTION_WORDS = new Set([
+  'que', 'para', 'antes', 'de', 'sin', 'a', 'menos', 'con', 'tal', 'hasta', 'cuando',
+  'aunque', 'en', 'caso', 'ojalá', 'quizás', 'quizá', 'vez', 'mientras', 'después',
+  'fin', 'siempre', 'modo', 'manera', 'como', 'donde', 'no', 'lo', 'la', 'le', 'les',
+  'me', 'te', 'se', 'nos', 'os', 'el', 'un', 'una', 'y', 'o', 'ni', 'si', 'porque',
+  'así', 'luego', 'apenas',
+]);
+
+// Irregular conditional stems (tendría, haría, …) — not infinitive + ía.
+const IRREGULAR_CONDITIONAL_STEMS = new Set([
+  'tendr', 'podr', 'har', 'dir', 'sabr', 'querr', 'pondr', 'saldr', 'vendr', 'habr',
+  'cabr', 'valdr',
+]);
+
+// A conditional is the whole infinitive + ía (gustaría, comería). Ending in
+// -ría isn't enough: quería and prefería are imperfects of querer/preferir.
+// -aría is always conditional (the -ar imperfect is -aba); -ería / -iría only
+// when what's left is a known infinitive.
+function isConditional(word: string): boolean {
+  const m = word.toLowerCase().match(/^(.+)ía(s|mos|is|n)?$/);
+  const stem = m?.[1];
+  if (!stem) return false;
+  if (IRREGULAR_CONDITIONAL_STEMS.has(stem) || stem.endsWith('ar')) return true;
+  return isKnownLemma(stem);
+}
+
+function isPastSubjunctive(tense: SubjTense): boolean {
+  return tense !== 'present' && tense !== 'perfect';
+}
+
+// Item 7: the note shown when the reader taps a trigger. Explains the
+// tense relationship with the subjunctive it licenses: a present frame takes
+// the present subjunctive (quiero que vengas), a past frame — preterite,
+// imperfect, pluperfect or conditional — takes the imperfect (quería que
+// vinieras). The frame is read off the paired verb's lexicon tense, which
+// always agrees with the trigger in a well-formed sentence. Null when the tap
+// isn't on a trigger, or the pair has no lexicon tense (pre-v6 chunks).
+export function tenseNote(
+  text: string,
+  annotations: ReadonlyArray<MoodAnnotation> | undefined,
+  start: number,
+  end: number,
+): string | null {
+  if (!annotations) return null;
+  const trigger = annotations.find((a) => a.role === 'trigger' && start < a.end && a.start < end);
+  if (!trigger) return null;
+  const verb = annotations.find(
+    (a) => a.role === 'subjunctive_verb' && a.pairId === trigger.pairId && a.tense !== undefined,
+  );
+  if (!verb?.tense) return null;
+  const triggerText = text.slice(trigger.start, trigger.end);
+  const verbText = text.slice(verb.start, verb.end);
+  const past = isPastSubjunctive(verb.tense);
+  const words = triggerText.match(WORD_RE) ?? [];
+  if (words[0]?.toLowerCase() === 'si') {
+    return past
+      ? `After "si", the past subjunctive "${verbText}" marks something hypothetical — it isn't (or wasn't) actually so.`
+      : null;
+  }
+  const frameVerb = words.find((w) => !TRIGGER_FUNCTION_WORDS.has(w.toLowerCase()));
+  if (frameVerb) {
+    if (!past) return `"${frameVerb}" is present, so the subjunctive stays present: "${verbText}".`;
+    const conditional = isConditional(frameVerb);
+    return conditional
+      ? `"${frameVerb}" is conditional, which counts as past, so the subjunctive shifts to "${verbText}".`
+      : `"${frameVerb}" is past, so the subjunctive shifts to "${verbText}".`;
+  }
+  return past
+    ? `The main verb is past, so after "${triggerText}" the subjunctive shifts to "${verbText}".`
+    : `The main verb is present, so after "${triggerText}" the subjunctive is present: "${verbText}".`;
 }

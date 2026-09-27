@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { ChunkAndGloss } from './prompt';
+import { ChunkAndGloss, LexiconDisagreement, PROMPT_VERSION } from './prompt';
 import {
   Chunk,
   ChunkId,
@@ -11,7 +11,7 @@ import {
   Settings,
   WordDefinition,
 } from './types';
-import { defaultSettings, emptyLearnerState } from './core';
+import { defaultSettings, emptyLearnerState, upgradeLegacyPlaceholders } from './core';
 
 // === Client ===
 //
@@ -115,7 +115,7 @@ interface PassageRow {
 }
 
 function passageFromRow(row: PassageRow): Passage {
-  return {
+  return upgradeLegacyPlaceholders({
     id: row.id as PassageId,
     title: row.title,
     language: row.language as Passage['language'],
@@ -131,7 +131,7 @@ function passageFromRow(row: PassageRow): Passage {
     chunkingMode: row.chunking_mode === 'lyrics' ? 'lyrics' : 'prose',
     folder: row.folder ?? null,
     subfolder: row.subfolder ?? null,
-  };
+  });
 }
 
 // Fetch all passages visible to the current user (own + public), with their
@@ -342,7 +342,7 @@ export class ContentRefusedError extends NonRetryableError {}
 
 export async function callChunkAndGloss(
   text: string,
-  options: { chunkingMode?: ChunkingMode } = {},
+  options: { chunkingMode?: ChunkingMode; context?: ReadonlyArray<string> } = {},
 ): Promise<ReadonlyArray<ChunkAndGloss>> {
   // Retry transient failures (EarlyDrop, network blips, 5xx) silently. Most
   // of the failures we see are these — auto-retry usually wins before the
@@ -359,7 +359,7 @@ export async function callChunkAndGloss(
     }
     try {
       const { data, error } = await supabase.functions.invoke('chunk-and-gloss', {
-        body: { text, chunkingMode },
+        body: { text, chunkingMode, context: options.context ?? [] },
       });
       if (error) {
         lastErr = error;
@@ -375,8 +375,9 @@ export async function callChunkAndGloss(
         // App-level error from the function. Three known errorKinds:
         //   overloaded — Anthropic at capacity; same call will fail.
         //   unavailable — service tried + health check failed; same.
-        //   refused — content was specifically refused; caller will skip
-        //     this batch and continue with the next.
+        //   refused — this content failed on both models (refusal, preamble,
+        //     truncation or schema failure); the caller keeps the source text
+        //     as an unavailable chunk and continues with the next batch.
         if (payload.errorKind === 'refused') {
           throw new ContentRefusedError(payload.error);
         }
@@ -405,7 +406,7 @@ export async function callChunkAndGloss(
   // Log the technical detail for debugging, then surface the friendly one.
   console.error('chunk-and-gloss failed after retries:', lastErr);
   // A refused batch must keep its ContentRefusedError type so the batch
-  // fetcher inserts a […] placeholder and continues to the next batch,
+  // fetcher keeps it as an unavailable chunk and continues to the next batch,
   // rather than failing the whole passage. Re-wrapping it in a plain Error
   // (as the catch-all below does) erases the type and turns a skippable
   // refusal into a dead-end "Try again" loop on the same content.
@@ -415,6 +416,41 @@ export async function callChunkAndGloss(
   // flattening it to the generic catch-all.
   if (lastErr instanceof NonRetryableError) throw new Error(lastErr.message);
   throw new Error(humanizeChunkAndGlossError(lastErr));
+}
+
+// === Mood review log ===
+
+// Write model-vs-lexicon disagreements (task item 5) to mood_review_log, now
+// that the chunk has an id. Fire-and-forget: a missing table (migration not
+// yet applied) or a network blip must never affect reading.
+export function insertMoodReviewEvents(
+  userId: string,
+  passageId: PassageId,
+  rows: ReadonlyArray<{
+    readonly chunkId: ChunkId;
+    readonly chunkText: string;
+    readonly disagreement: LexiconDisagreement;
+  }>,
+): void {
+  if (rows.length === 0) return;
+  void supabase
+    .from('mood_review_log')
+    .insert(
+      rows.map((r) => ({
+        user_id: userId,
+        passage_id: passageId,
+        chunk_id: r.chunkId,
+        chunk_text: r.chunkText,
+        lemma: r.disagreement.lemma,
+        token: r.disagreement.token,
+        lexicon_answer: r.disagreement.lexiconAnswer,
+        model_answer: r.disagreement.modelAnswer,
+        prompt_version: PROMPT_VERSION,
+      })),
+    )
+    .then(({ error }) => {
+      if (error) console.warn('mood review log insert failed:', error.message);
+    });
 }
 
 // === Edge Function: suggest-title ===

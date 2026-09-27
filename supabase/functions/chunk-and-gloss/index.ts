@@ -11,11 +11,23 @@
 
 import Anthropic from 'npm:@anthropic-ai/sdk@0.95.2';
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import {
+  applyLexicon,
+  formatLexiconFacts,
+  scanLexiconFacts,
+  type CandidateAnnotation,
+  type CheckedAnnotation,
+  type LexiconDisagreement,
+} from '../_shared/subjunctive.ts';
+import { detectSourceLanguage } from '../_shared/language.ts';
 
 // ===== Shared prompt block — keep in sync with src/prompt.ts =====
 
 // v5: added mood_annotations (subjunctive highlighting) to the tool schema.
-const PROMPT_VERSION = 'v5';
+// v6: faithful-translation framing; possible_subjunctive role + lemma on verb
+//     annotations (lexicon veto); tightened two-mood triggers; preceding-context
+//     and lexicon-facts blocks in the user message.
+const PROMPT_VERSION = 'v6';
 const PRIMARY_MODEL = 'claude-haiku-4-5';
 const FALLBACK_MODEL = 'claude-sonnet-4-5';
 // Wall-clock timeouts per call. Supabase Edge Functions get killed around
@@ -26,7 +38,9 @@ const FALLBACK_TIMEOUT_MS = 30_000;
 
 const SYSTEM_PROMPT = `You are a translation aid for an adult Spanish-reading practice tool. The user pastes a passage that may be in Spanish OR in English. Your job: produce Spanish chunks (5-15 words each) with an English gloss for each chunk.
 
-This tool processes ALL kinds of adult reading material — literary fiction, history, journalism, memoir, academic writing — including passages that describe difficult subjects (war, atrocity, illness, sexuality, crime). You are a translation and chunking aid, NOT a content moderator. The user has chosen the source material for their own educational purposes; refusing to process serious literature or historical writing defeats the tool's purpose. Process every input as written.
+The task is a faithful translation of published literary and journalistic work — novels, stories, history, memoir, news — for an adult reader who is studying it in the original. These works often depict violence, sexuality, cruelty, war, crime and illness, and those passages are frequently central to the story. Render them accurately, with the same force and explicitness as the source. You are a translation and chunking aid, NOT a content moderator; the reader chose the text.
+
+NEVER soften, summarize, sanitize, euphemize or omit anything. Every sentence of the input must appear in your output, translated in full. A silently softened or shortened translation is worse than no translation, because the reader cannot tell that anything is missing.
 
 DETECT THE INPUT LANGUAGE FIRST.
 
@@ -73,13 +87,22 @@ Output:
 
 Note: the Spanish in Example 2 is your translation; the English glosses are the user's original English, sliced to align with each Spanish chunk.
 
+INPUT FORMAT:
+
+The user message is either the plain text to process, or it contains up to three labelled blocks:
+- PRECEDING CONTEXT: the one or two Spanish chunks that come just before this text in the same work. They were already processed. Do NOT chunk, gloss or return them. Use them only to work out who dropped subjects and pronouns refer to, so the English gloss gets the right he/she/they/it. Spanish omits subject pronouns; the context tells you the subject.
+- LEXICON FACTS: verb forms in the text that a deterministic conjugation table has identified. These are authoritative GIVEN FACTS about mood and tense, not suggestions. Gloss each one accordingly (e.g. an imperfect subjunctive "aullaran" is "would howl / howled", never the future "will howl") and do not re-derive it.
+- TEXT TO PROCESS: the text you must chunk and gloss. Everything in your output comes from this block only.
+
 MOOD ANNOTATIONS (subjunctive highlighting):
 
 For each chunk, also return a mood_annotations array marking Spanish subjunctive verb forms and the mood triggers that license them. This drives a visual highlight that helps the reader notice subjunctive morphology. If a chunk has no subjunctive forms, return an empty mood_annotations array (or omit it).
 
 What to tag:
-- Every subjunctive VERB form: present, imperfect (both -ra and -se forms), present perfect, and pluperfect subjunctive. For perfect forms, tag the WHOLE verb phrase including the auxiliary (e.g. "haya llamado", "hubiera venido"). role = "subjunctive_verb".
+- Every subjunctive VERB form: present, imperfect (both -ra and -se forms), present perfect, and pluperfect subjunctive. For perfect forms, tag the WHOLE verb phrase including the auxiliary (e.g. "haya llamado", "hubiera venido"). role = "subjunctive_verb". Give its infinitive in "lemma" (e.g. "llamar" for "haya llamado", "ir" for "vaya").
 - The mood TRIGGER when it appears in the SAME chunk: a conjunction or verb + que, or a subordinator that governs the subjunctive (e.g. "quiero que", "dudo que", "es posible que", "para que", "sin que", "antes de que"). role = "trigger".
+
+Before tagging ANY trigger, first identify the verb it governs and confirm that verb is subjunctive. No subjunctive verb, no trigger.
 
 Pairing (pair_id):
 - A trigger and the verb(s) it licenses share the same integer pair_id. Number pair_ids starting at 1 within each chunk.
@@ -88,17 +111,20 @@ Pairing (pair_id):
 
 Special cases:
 - Negative imperatives ("no me digas") and independent subjunctive uses ("que te vaya bien", "¡viva!"): tag the verb, no trigger.
-- Two-mood triggers (aunque, cuando, quizás, mientras, relative clauses with indefinite antecedents): tag the pair ONLY when the verb is actually subjunctive. When the verb is indicative, tag NOTHING.
-- Do NOT tag indicative verbs, even right after a que or a two-mood trigger.
-- When you are uncertain whether a form is subjunctive in this context (homographs, ambiguous forms after quoted speech), OMIT it. A missed highlight is fine; a wrong one teaches wrong grammar.
+- Two-mood triggers (cuando, aunque, mientras, quizás, hasta que, si, después de que, relative clauses with indefinite antecedents, etc.) followed by an INDICATIVE verb get no tags at all — neither the trigger nor the verb. Example: "Cuando llegaba la comida, los seres humanos estaban callados" has NO subjunctive: llegaba and estaban are indicative. Tag nothing in it.
+- Do NOT tag indicative verbs, even right after a que or a two-mood trigger. A nearby trigger word does not make the next verb subjunctive: check the verb's own ending ("se recuperó", "portas", "aullarán" are indicative).
+
+Uncertainty:
+- Uncertain whether a TRIGGER applies: omit it.
+- Uncertain whether a VERB form is subjunctive in this context (e.g. homographs like "coma", "vaya", "cante", which can also be nouns or interjections): tag it with role = "possible_subjunctive" (with lemma and pair_id) instead of "subjunctive_verb". Never pair a trigger with a possible_subjunctive verb.
 
 Each annotation's "span" MUST be copied verbatim from this chunk's tlText, exactly as it appears (same accents, capitalization, and spacing), so it can be located in the text.
 
 MOOD EXAMPLE — for the chunk tlText "No creo que llames antes de que él llegue":
 - { span: "No creo que", role: "trigger", pair_id: 1 }
-- { span: "llames", role: "subjunctive_verb", pair_id: 1 }
+- { span: "llames", role: "subjunctive_verb", pair_id: 1, lemma: "llamar" }
 - { span: "antes de que", role: "trigger", pair_id: 2 }
-- { span: "llegue", role: "subjunctive_verb", pair_id: 2 }
+- { span: "llegue", role: "subjunctive_verb", pair_id: 2, lemma: "llegar" }
 
 Call split_and_gloss with your output. Do not include any text outside the tool call.`;
 
@@ -133,8 +159,12 @@ const TOOL = {
                 type: 'object',
                 properties: {
                   span: { type: 'string' },
-                  role: { type: 'string', enum: ['trigger', 'subjunctive_verb'] },
+                  role: {
+                    type: 'string',
+                    enum: ['trigger', 'subjunctive_verb', 'possible_subjunctive'],
+                  },
                   pair_id: { type: 'integer' },
+                  lemma: { type: 'string' },
                 },
                 required: ['span', 'role', 'pair_id'],
               },
@@ -196,7 +226,7 @@ Deno.serve(async (req) => {
   }
 
   // Parse request body.
-  let body: { text?: unknown; chunkingMode?: unknown };
+  let body: { text?: unknown; chunkingMode?: unknown; context?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -208,6 +238,19 @@ Deno.serve(async (req) => {
   }
   const chunkingMode: 'prose' | 'lyrics' =
     body.chunkingMode === 'lyrics' ? 'lyrics' : 'prose';
+  // Up to two preceding Spanish chunks, for pronoun resolution only (item 8).
+  // The client only ever sends text that comes BEFORE this batch.
+  const context = Array.isArray(body.context)
+    ? body.context
+        .filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+        .slice(-MAX_CONTEXT_CHUNKS)
+        .map((c) => c.trim().slice(0, MAX_CONTEXT_CHARS))
+    : [];
+  // Lexicon facts (item 5): verb forms the conjugation tables are sure about,
+  // handed to the model as givens. Empty for English input — there's no
+  // Spanish to scan until the model has translated it.
+  const lexiconFacts = formatLexiconFacts(scanLexiconFacts(text));
+  const request: ModelRequest = { text, chunkingMode, context, lexiconFacts };
 
   // Call Anthropic with a Haiku→Sonnet fallback.
   const client = new Anthropic({ apiKey: anthropicKey });
@@ -216,7 +259,7 @@ Deno.serve(async (req) => {
     let result: { chunks: ValidatedChunk[]; model: string };
     try {
       // Primary: Haiku — fast and cheap, handles ~95%+ of batches.
-      result = await callModel(client, text, PRIMARY_MODEL, PRIMARY_TIMEOUT_MS, chunkingMode);
+      result = await callModel(client, request, PRIMARY_MODEL, PRIMARY_TIMEOUT_MS);
     } catch (primaryErr) {
       const primaryMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
       // If Anthropic itself is overloaded (HTTP 529), Sonnet hits the same
@@ -233,8 +276,12 @@ Deno.serve(async (req) => {
           errorKind: 'overloaded',
         });
       }
+      // Same framing, same request — Sonnet refuses less and follows the
+      // schema more reliably. This is the one retry the server does; shifted
+      // chunk boundaries for English sources are the client's job, since only
+      // it knows the neighbouring sentences.
       console.warn(`Haiku failed (${primaryMsg}); falling back to Sonnet`);
-      result = await callModel(client, text, FALLBACK_MODEL, FALLBACK_TIMEOUT_MS, chunkingMode);
+      result = await callModel(client, request, FALLBACK_MODEL, FALLBACK_TIMEOUT_MS);
     }
     return jsonResponse({
       chunks: result.chunks,
@@ -262,9 +309,12 @@ Deno.serve(async (req) => {
       const healthy = await isServiceHealthy(client);
       if (healthy) {
         console.warn('chunk-and-gloss: content refused (health check passed)');
+        // "refused" covers any content-specific failure: refusal prose, a
+        // preamble instead of the tool call, truncation, or output that fails
+        // schema validation. The client keeps the source text and marks the
+        // chunk [not translated]; it never drops it.
         return jsonResponse({
-          error:
-            'The translation service declined to process this batch (content policy). The batch will be skipped.',
+          error: 'The translation service could not translate this section.',
           errorKind: 'refused',
         });
       }
@@ -283,58 +333,102 @@ Deno.serve(async (req) => {
 
 // ===== Anthropic call w/ timeout + structured parsing =====
 
-type MoodRole = 'trigger' | 'subjunctive_verb';
+// Item 8: how much preceding text rides along for pronoun resolution.
+const MAX_CONTEXT_CHUNKS = 2;
+const MAX_CONTEXT_CHARS = 400;
 
-interface MoodAnnotation {
-  start: number;
-  end: number;
-  role: MoodRole;
-  pairId: number;
+// Spanish input must come back essentially verbatim (rule 5), so if the chunks
+// carry noticeably fewer letters than the input, something was dropped —
+// sanitised or skipped. Treated as a failure, like a refusal: a visible
+// "[not translated]" beats a silent hole. Lenient, because the model may
+// legitimately drop a stray symbol or normalise whitespace.
+const MIN_SPANISH_COVERAGE = 0.85;
+
+interface ModelRequest {
+  readonly text: string;
+  readonly chunkingMode: 'prose' | 'lyrics';
+  readonly context: ReadonlyArray<string>;
+  readonly lexiconFacts: string;
 }
 
 interface ValidatedChunk {
   tlText: string;
   englishGloss: string;
   sentenceIndex: number;
-  moodAnnotations?: MoodAnnotation[];
+  moodAnnotations?: CheckedAnnotation[];
+  lexiconDisagreements?: LexiconDisagreement[];
 }
 
 // Resolve the model's raw span-based mood_annotations into offset-based
-// MoodAnnotations against a chunk's tlText. Mirrors resolveMoodAnnotations in
+// annotations against a chunk's tlText. Mirrors resolveMoodAnnotations in
 // src/prompt.ts — keep in sync. Each span must appear verbatim in tlText;
 // malformed or unlocatable annotations are dropped (false negatives are cheap,
 // false positives teach wrong grammar). Repeated spans resolve to their first
-// occurrence. Returns undefined when nothing resolves, so the field is omitted.
-function resolveMoodAnnotations(tlText: string, raw: unknown): MoodAnnotation[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  const resolved: MoodAnnotation[] = [];
+// occurrence. The lexicon post-pass (applyLexicon) runs on the result.
+function resolveMoodAnnotations(tlText: string, raw: unknown): CandidateAnnotation[] {
+  if (!Array.isArray(raw)) return [];
+  const resolved: CandidateAnnotation[] = [];
   for (const a of raw) {
     if (typeof a !== 'object' || a === null) continue;
     const span = (a as { span?: unknown }).span;
     const role = (a as { role?: unknown }).role;
     const pairId = (a as { pair_id?: unknown }).pair_id;
+    const lemma = (a as { lemma?: unknown }).lemma;
     if (typeof span !== 'string' || span.length === 0) continue;
-    if (role !== 'trigger' && role !== 'subjunctive_verb') continue;
+    if (role !== 'trigger' && role !== 'subjunctive_verb' && role !== 'possible_subjunctive') {
+      continue;
+    }
     if (typeof pairId !== 'number' || !Number.isFinite(pairId)) continue;
     const start = tlText.indexOf(span);
     if (start < 0) continue;
-    resolved.push({ start, end: start + span.length, role, pairId: Math.trunc(pairId) });
+    resolved.push({
+      start,
+      end: start + span.length,
+      role,
+      pairId: Math.trunc(pairId),
+      ...(role !== 'trigger' && typeof lemma === 'string' && lemma.length > 0 ? { lemma } : {}),
+    });
   }
-  return resolved.length > 0 ? resolved : undefined;
+  return resolved;
 }
 
+// Mirrors buildUserMessage in src/prompt.ts — keep in sync.
+function buildUserMessage(
+  text: string,
+  context: ReadonlyArray<string>,
+  lexiconFacts: string,
+): string {
+  if (context.length === 0 && lexiconFacts.length === 0) return text;
+  const parts: string[] = [];
+  if (context.length > 0) {
+    parts.push(`PRECEDING CONTEXT (do not translate or return):\n<<<\n${context.join(' ')}\n>>>`);
+  }
+  if (lexiconFacts.length > 0) {
+    parts.push(`LEXICON FACTS (authoritative):\n${lexiconFacts}`);
+  }
+  parts.push(`TEXT TO PROCESS:\n<<<\n${text}\n>>>`);
+  return parts.join('\n\n');
+}
+
+function letterCount(s: string): number {
+  return (s.match(/\p{L}/gu) ?? []).length;
+}
+
+// Failure is detected by schema validation, not by sniffing for refusal
+// wording: anything that doesn't parse into the expected structure throws —
+// refusal prose, a preamble instead of the tool call, truncation, a malformed
+// chunk, or a Spanish input that came back with text missing.
 async function callModel(
   client: Anthropic,
-  text: string,
+  request: ModelRequest,
   model: string,
   timeoutMs: number,
-  chunkingMode: 'prose' | 'lyrics' = 'prose',
 ): Promise<{ chunks: ValidatedChunk[]; model: string }> {
   // For lyrics, the addendum precedes the cached SYSTEM_PROMPT block. The
   // shared prefix still benefits from Anthropic's ephemeral cache; the
   // addendum is small enough that re-sending it per request is fine.
   const systemBlocks =
-    chunkingMode === 'lyrics'
+    request.chunkingMode === 'lyrics'
       ? [
           { type: 'text' as const, text: LYRICS_ADDENDUM },
           { type: 'text' as const, text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' as const } },
@@ -347,13 +441,23 @@ async function callModel(
       model,
       max_tokens: 8192,
       system: systemBlocks,
-      messages: [{ role: 'user', content: text }],
+      messages: [
+        {
+          role: 'user',
+          content: buildUserMessage(request.text, request.context, request.lexiconFacts),
+        },
+      ],
       tools: [TOOL],
       tool_choice: { type: 'tool', name: 'split_and_gloss' },
     }),
     timeoutMs,
     model,
   );
+
+  if (response.stop_reason === 'max_tokens') {
+    // Truncated mid-tool-call: whatever parsed is a prefix of the answer.
+    throw new Error(`${model} output was truncated`);
+  }
 
   const toolUse = response.content.find((b) => b.type === 'tool_use');
   if (!toolUse || toolUse.type !== 'tool_use' || toolUse.name !== 'split_and_gloss') {
@@ -376,27 +480,43 @@ async function callModel(
   const chunks: ValidatedChunk[] = [];
   for (const c of raw) {
     if (
-      typeof c === 'object' &&
-      c !== null &&
-      typeof (c as Record<string, unknown>).tlText === 'string' &&
-      typeof (c as Record<string, unknown>).englishGloss === 'string' &&
-      typeof (c as Record<string, unknown>).sentenceIndex === 'number'
+      typeof c !== 'object' ||
+      c === null ||
+      typeof (c as Record<string, unknown>).tlText !== 'string' ||
+      typeof (c as Record<string, unknown>).englishGloss !== 'string' ||
+      typeof (c as Record<string, unknown>).sentenceIndex !== 'number'
     ) {
-      const v = c as ValidatedChunk;
-      const moodAnnotations = resolveMoodAnnotations(
-        v.tlText,
-        (c as { mood_annotations?: unknown }).mood_annotations,
-      );
-      chunks.push({
-        tlText: v.tlText,
-        englishGloss: v.englishGloss,
-        sentenceIndex: Math.trunc(v.sentenceIndex),
-        ...(moodAnnotations ? { moodAnnotations } : {}),
-      });
+      // One bad chunk fails the whole response. Skipping it (as v5 did) would
+      // silently drop part of the passage.
+      throw new Error(`${model} returned a malformed chunk`);
     }
+    const v = c as { tlText: string; englishGloss: string; sentenceIndex: number };
+    if (v.englishGloss.trim().length === 0 && /\p{L}/u.test(v.tlText)) {
+      throw new Error(`${model} returned an empty gloss`);
+    }
+    const { annotations, disagreements } = applyLexicon(
+      v.tlText,
+      resolveMoodAnnotations(v.tlText, (c as { mood_annotations?: unknown }).mood_annotations),
+    );
+    if (disagreements.length > 0) {
+      console.warn(`lexicon disagreement: ${JSON.stringify(disagreements)}`);
+    }
+    chunks.push({
+      tlText: v.tlText,
+      englishGloss: v.englishGloss,
+      sentenceIndex: Math.trunc(v.sentenceIndex),
+      ...(annotations.length > 0 ? { moodAnnotations: annotations } : {}),
+      ...(disagreements.length > 0 ? { lexiconDisagreements: disagreements } : {}),
+    });
   }
   if (chunks.length === 0) {
     throw new Error(`${model} returned no valid chunks`);
+  }
+  if (detectSourceLanguage(request.text) === 'es') {
+    const out = letterCount(chunks.map((ch) => ch.tlText).join(' '));
+    if (out < letterCount(request.text) * MIN_SPANISH_COVERAGE) {
+      throw new Error(`${model} dropped part of the Spanish input`);
+    }
   }
   return { chunks, model };
 }
@@ -436,7 +556,7 @@ async function isServiceHealthy(client: Anthropic): Promise<boolean> {
   try {
     const result = await callModel(
       client,
-      HEALTH_CHECK_SENTENCE,
+      { text: HEALTH_CHECK_SENTENCE, chunkingMode: 'prose', context: [], lexiconFacts: '' },
       PRIMARY_MODEL,
       HEALTH_CHECK_TIMEOUT_MS,
     );

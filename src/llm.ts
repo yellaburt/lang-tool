@@ -10,7 +10,7 @@ export type { ChunkAndGloss } from './prompt';
 
 export async function splitAndGloss(
   passage: string,
-  options: { chunkingMode?: ChunkingMode } = {},
+  options: { chunkingMode?: ChunkingMode; context?: ReadonlyArray<string> } = {},
 ): Promise<ReadonlyArray<ChunkAndGloss>> {
   const cleaned = passage.trim();
   if (cleaned.length === 0) return [];

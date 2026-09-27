@@ -69,7 +69,7 @@ trying to be Duolingo or a SaaS — three users total, ever.
   story, a news article), Claude often uses the real title.
 
 ### Reading mode
-One of four reading flows is active (`settings.readingMode`, picked in
+One of five reading flows is active (`settings.readingMode`, picked in
 Settings → Reading mode). The choice is **sticky**: it's persisted in the
 settings blob and synced across devices, so the last mode a user picked carries
 over to their next session on any device (the `library-loaded` reducer uses the
@@ -87,6 +87,16 @@ their own remembered mode:
   no re-read. Keyboard: Space = Continue, E = Show English (while parked). The
   park bar is an in-flow footer of the reading container on mobile (not a fixed
   overlay) so it stays inside the dvh viewport and the scroll area sits above it.
+- **Reading**: text-first and silent; Show/Hide English + Continue. With
+  `readAloudOnAdvance` on, Continue plays the Spanish once (text visible) and
+  then advances.
+- **Read, listen, reveal** (`'reveal'`): the Spanish shows silently → Continue
+  **hides** it and plays the chunk audio (Replay available while hidden;
+  Continue skips to the reveal) → when the audio ends the Spanish reappears and
+  the English stays behind a Show English tap → Continue advances. Never
+  auto-advances. Phases reuse the existing flags (`readingSpeaking`,
+  `spanishTtsDone`); `speechNonce` in UI state makes Replay restart the
+  utterance mid-audio. ↻ / R in this mode replays hidden, not back to silent.
 
 Phases that layer on top (each user-toggleable):
 - **English aloud**: English gloss is also read aloud.
@@ -123,6 +133,15 @@ Home (jump to start).
 - Definitions are cached server-side keyed on (word, chunk_text, language)
   so repeat taps anywhere are instant + free.
 - Every lookup is logged to a per-user history table for future review.
+- In modes with audio (all but Reading), the tapped word is **spoken** when the
+  definition appears: a three-word window (word before + word + word after, as
+  written), never crossing punctuation or the chunk edge (`speechWindow`,
+  `core.ts`). Web Speech in the passage voice — no ElevenLabs, nothing to
+  cache. Lookup still pauses passage audio until Resume, as before.
+- Tapping a subjunctive **trigger** adds a deterministic tense note to the
+  panel ("*quería* is past, so the subjunctive shifts to *vinieras*") —
+  `tenseNote` in `core.ts`, driven by the paired verb's lexicon tense. v6+
+  chunks only.
 - Tap × on the panel to dismiss without resuming. Tap ▶ Resume on the
   control bar to dismiss AND continue reading.
 - In **Reading mode**, once the definition loads the panel header also shows a
@@ -147,6 +166,24 @@ Home (jump to start).
 - Only passages processed under `PROMPT_VERSION` v5 or later have annotations.
   Older passages render unhighlighted and are not backfilled — there's no
   per-passage reprocess path.
+- **v6: a deterministic lexicon checks the model**
+  (`supabase/functions/_shared/subjunctive.ts`, one copy, used by the Edge
+  Function and by client tests). It generates subjunctive tables per lemma
+  (present, imperfect -ra/-se, perfect, pluperfect) and, server-side:
+  - **vetoes** every verb tag whose token isn't a subjunctive form of the
+    lemma the model named (catches *se recuperó*, *portas*, *aullarán*);
+  - resolves the model's uncertain tags: unambiguous form → `subjunctive_verb`,
+    homograph (*coma*, *vaya*, *cante*) → **`possible_subjunctive`**, drawn in
+    the muted trigger style;
+  - tags unambiguous known forms the model missed;
+  - drops any trigger with no `subjunctive_verb` of the same pairId in the
+    same chunk (the renderer applies this guard too, for stored v5 chunks);
+  - pre-scans Spanish input and hands confident forms to the prompt as
+    **LEXICON FACTS**, so *aullaran* isn't glossed as the future.
+  Model-vs-lexicon disagreements go to the `mood_review_log` table (written by
+  the client once chunk ids exist). Recurring rows on one lemma = audit that
+  entry. Reverse lookup only covers `KNOWN_VERBS` (~400 verbs); the veto works
+  for any lemma (unknown ones try every stem-change class).
 - See `task-subjunctive-highlighting.md` for the full design, and
   `seed-subjunctive.md` for a test passage covering every form plus the
   false-positive decoys.
@@ -193,11 +230,26 @@ The `chunk-and-gloss` Edge Function:
    negatives are cheap; false positives teach wrong grammar.
 3. If Haiku times out (20s), refuses (returns text instead of calling the
    tool), or returns malformed output → tries **Sonnet 4.5** (30s timeout).
+   **Failure = schema validation**, not refusal-sniffing: no tool call,
+   truncation (`stop_reason: max_tokens`), any malformed chunk, an empty gloss,
+   or a Spanish input that comes back with >15% of its letters missing all
+   count. Every call carries the "faithful translation of a published work —
+   never soften, summarize or omit" framing, the Spanish of the 1–2 preceding
+   chunks as **PRECEDING CONTEXT** (pronoun gender; earlier text only), and any
+   LEXICON FACTS.
 4. If both fail, runs a **diagnostic call** with a known-benign sentence
    ("Hola, ¿cómo estás hoy?") on Haiku.
-   - Diagnostic succeeds → conclude the original was a **content refusal**.
-     Return `errorKind: 'refused'` to the client. Client inserts a `[…]`
-     placeholder chunk and continues to the next batch.
+   - Diagnostic succeeds → conclude the original was a **content failure**.
+     Return `errorKind: 'refused'` to the client. The client never drops the
+     text: a **Spanish** source becomes a chunk with `unavailable: 'gloss'`
+     (Spanish renders normally, word-tap + TTS work, `[not translated]` in the
+     gloss slot). An **English** source (a hole in the book) first gets one
+     retry with **shifted boundaries** (`shiftedPieces`: split the batch into
+     single sentences, or cut one sentence at its middle clause break); what
+     still fails becomes `unavailable: 'translation'` — the English source
+     shown as-is + `[not translated]`, no word-tap/TTS/highlights. Both kinds
+     get a per-chunk **↻ Retry translation** button. Language is guessed
+     locally (`_shared/language.ts`).
    - Diagnostic fails → conclude the **service is unavailable**. Return
      `errorKind: 'unavailable'` with a user-ready message.
 5. **Special case HTTP 529** (Anthropic overloaded): skip the Sonnet
@@ -280,11 +332,19 @@ seed-subjunctive.md                Test passage for verifying it.
 supabase/
   functions/chunk-and-gloss/   2-sentence chunking + Haiku→Sonnet
                                fallback + health-check diagnostic.
+  functions/_shared/           NOT duplicated: imported by the Edge Function
+                               (with .ts) and by src/ (without). Pure, no
+                               runtime APIs. subjunctive.ts = conjugation
+                               lexicon + mood post-pass; language.ts = es/en
+                               guess. Supabase bundles _shared on deploy.
   functions/define-word/       Contextual word definition with cache.
   functions/suggest-title/     Library-card title generator (~$0.0005/call).
   migrations/                  Schema for passages, reading_state,
                                user_settings, word_lookups (cache),
-                               word_lookup_events (per-user history).
+                               word_lookup_events (per-user history),
+                               mood_review_log (lexicon disagreements).
+                               NOT auto-deployed — apply by hand in the
+                               SQL editor. Check prefixes: no duplicates.
 
 .github/workflows/
   deploy-supabase.yml          Auto-deploys all three Edge Functions.
@@ -323,11 +383,14 @@ Web Speech's native pause/resume gets stuck after a few seconds of
 pause, especially in Chrome. We cancel + re-speak the current chunk on
 resume. Cost: re-hearing ~1 second of audio. Benefit: it always works.
 
-### Refused-batch placeholder is a real chunk
-When the chunk-and-gloss function decides a batch was content-refused,
-the client inserts a placeholder chunk with `tlText: '[…]'`. Speech
-effects detect the `[` prefix and skip TTS. The user sees a visible
-"skipped" marker in the reading flow but the rest of the passage works.
+### Untranslated text is kept, never dropped
+A batch the pipeline gives up on is stored as a real chunk carrying its
+**source text** with `unavailable: 'gloss' | 'translation'` (see the
+fallback tier above). The old `[…]` placeholder is gone; legacy ones are
+converted on load by `upgradeLegacyPlaceholders` (`core.ts`), which recovers
+the source sentences from `rawText`, so they're retryable too. A silently
+softened or missing translation is treated as worse than a visible
+`[not translated]`.
 
 ### Auto-suggest titles, allow override
 At save time, every passage with the deterministic first-line title
@@ -380,11 +443,13 @@ column"; it'd be wrong about the schema.
 ## Current problems
 
 ### Functional / UX gaps
-- **Subjunctive tagging is unproven on real text.** The known risk is a cheap
-  model over-tagging two-mood triggers (*cuando*, *aunque*, *quizás* +
-  indicative), which teaches wrong grammar rather than merely missing a form.
-  The prompt leans hard on omit-when-uncertain, but nothing verifies the output.
-  `seed-subjunctive.md` exists to exercise exactly these cases.
+- **Subjunctive tagging is still unproven on real text.** v6's lexicon veto
+  and trigger guard now verify every verb tag and drop orphaned triggers, but
+  the model still decides *which* trigger licenses a verb, and the lexicon
+  can't tell a subjunctive *hable* from nothing — only whether *hable* is a
+  subjunctive form. `seed-subjunctive.md` exercises the cases; check
+  `mood_review_log` after real reading.
+- **`mood_review_log` has no UI.** Query it in the Supabase SQL editor.
 - **No backfill for subjunctive annotations.** Passages processed before
   `PROMPT_VERSION` v5 render unhighlighted forever; there's no per-passage
   reprocess path. Adding one is a small follow-up (re-run stored `tlText`
@@ -399,9 +464,6 @@ column"; it'd be wrong about the schema.
   "processing" badge per row, and there's no toast when it's done. You
   open the passage and find out via "Loading next chunks…" buffering
   text whether it's ready.
-- **Refused-batch placeholder is permanent.** Once a batch shows `[…]`
-  the only way to retry is delete the whole passage and re-paste.
-  Should add a "retry this batch" button on placeholder chunks.
 - **No multi-select or drag-and-drop for moving passages.** Moving 10
   passages into a folder is 10 separate clicks through the 📁 form.
 - **Folder rename merges silently.** Renaming "News" to existing
