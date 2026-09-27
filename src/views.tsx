@@ -7,7 +7,7 @@ import {
   countSignificantWords,
   findNextChapter,
   isBookLikeFolder,
-  modeHasAudio,
+  lookupSpeechEnabled,
   passagePercentRead,
   speechWindow,
   splitBookIntoChapters,
@@ -2483,8 +2483,9 @@ export function ReadingView({ state, dispatch }: ViewProps) {
 
   // Item 9: speak the tapped word when its definition appears — the word with
   // its neighbours as written (speechWindow, computed at tap time), in the
-  // passage's Spanish voice. Only in modes that have audio; reading mode stays
-  // silent. The lookup already paused passage audio (and it stays paused until
+  // passage's Spanish voice. Only when the reader's setup has audio: every mode
+  // but Reading, and Reading too when read-aloud-on-advance is on. The lookup
+  // already paused passage audio (and it stays paused until
   // Resume, as before), so this never talks over the chunk. Web Speech is
   // local and free, so there's nothing to cache. Closing the panel, or tapping
   // another word, cuts it off.
@@ -2492,7 +2493,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   const lookupSpeechKey =
     lookupNow?.kind === 'ready' ? `${lookupNow.chunkId}|${lookupNow.word}|${lookupNow.speechWindow}` : null;
   const lookupSpeechText = lookupNow?.kind === 'ready' ? lookupNow.speechWindow : '';
-  const speakLookups = modeHasAudio(readingMode);
+  const speakLookups = lookupSpeechEnabled(state.learner.settings);
   useEffect(() => {
     if (lookupSpeechKey === null || !speakLookups) return;
     const ctl = speakChunk(

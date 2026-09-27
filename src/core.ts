@@ -9,7 +9,6 @@ import {
   Passage,
   PassageId,
   Question,
-  ReadingMode,
   ReviewEvent,
   ReviewEventId,
   ReviewOutcome,
@@ -844,20 +843,23 @@ export function shouldInterleaveQuestion(
 
 // === Reading modes ===
 
-// Does this mode play audio as part of reading? Used to decide whether a word
-// tap also speaks the word (item 9). 'reading' is text-first and silent while
-// the reader works; its only audio is at advance.
-export function modeHasAudio(mode: ReadingMode): boolean {
-  switch (mode) {
+// Does the reader's setup include audio? Decides whether a word tap also
+// speaks the word (item 9). Every mode plays audio except 'reading', which
+// has audio only when "Play Spanish audio when advancing" is on — and when it
+// is, word taps speak too.
+export function lookupSpeechEnabled(
+  settings: Pick<Settings, 'readingMode' | 'readAloudOnAdvance'>,
+): boolean {
+  switch (settings.readingMode) {
     case 'scaffolded':
     case 'listening':
     case 'light':
     case 'reveal':
       return true;
     case 'reading':
-      return false;
+      return settings.readAloudOnAdvance;
     default:
-      return assertNever(mode);
+      return assertNever(settings.readingMode);
   }
 }
 

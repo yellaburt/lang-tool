@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { detectSourceLanguage } from '../supabase/functions/_shared/language';
 import {
-  modeHasAudio,
+  lookupSpeechEnabled,
   precedingContext,
   replaceChunk,
   shiftedPieces,
@@ -209,11 +209,12 @@ describe('tenseNote', () => {
   });
 });
 
-describe('modeHasAudio', () => {
-  it('is false only for the silent reading mode', () => {
-    expect(modeHasAudio('reading')).toBe(false);
-    expect(modeHasAudio('reveal')).toBe(true);
-    expect(modeHasAudio('light')).toBe(true);
+describe('lookupSpeechEnabled', () => {
+  it('speaks in audio modes, and in Reading mode only with read-aloud on', () => {
+    expect(lookupSpeechEnabled({ readingMode: 'reading', readAloudOnAdvance: true })).toBe(true);
+    expect(lookupSpeechEnabled({ readingMode: 'reading', readAloudOnAdvance: false })).toBe(false);
+    expect(lookupSpeechEnabled({ readingMode: 'reveal', readAloudOnAdvance: false })).toBe(true);
+    expect(lookupSpeechEnabled({ readingMode: 'light', readAloudOnAdvance: false })).toBe(true);
   });
 });
 

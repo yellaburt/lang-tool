@@ -133,7 +133,8 @@ Home (jump to start).
 - Definitions are cached server-side keyed on (word, chunk_text, language)
   so repeat taps anywhere are instant + free.
 - Every lookup is logged to a per-user history table for future review.
-- In modes with audio (all but Reading), the tapped word is **spoken** when the
+- When the setup has audio (every mode except Reading, and Reading too when
+  "Play Spanish audio when advancing" is on), the tapped word is **spoken** when the
   definition appears: a three-word window (word before + word + word after, as
   written), never crossing punctuation or the chunk edge (`speechWindow`,
   `core.ts`). Web Speech in the passage voice — no ElevenLabs, nothing to
