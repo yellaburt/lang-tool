@@ -126,17 +126,38 @@ describe('replaceChunk', () => {
 });
 
 describe('precedingContext', () => {
-  it('returns up to two preceding Spanish chunks, never later ones', () => {
+  // The real La invención de Morel failure: "Pasó, de ida y de vuelta" came out
+  // as "He passed". The two chunks before it carry no gender at all; the clue
+  // (adormecida) and the settled subject ("She …") are further back.
+  const morel = [
+    chunk(0, 43, 'un pañuelo, casi violeta, en la cabeza.', { englishGloss: 'a scarf, almost violet, on her head.' }),
+    chunk(1, 44, 'Estuvo un rato mirando el mar,', { englishGloss: 'She stood for a while looking at the sea,' }),
+    chunk(2, 44, 'como adormecida;', { englishGloss: 'as if drowsy;' }),
+    chunk(3, 44, 'después se levantó y fue a buscar el libro.', { englishGloss: 'then she got up and went to look for the book.' }),
+    chunk(4, 45, 'Se movió con esa libertad que tenemos', { englishGloss: 'She moved with that freedom that we have' }),
+    chunk(5, 45, 'cuando estamos solos.', { englishGloss: 'when we are alone.' }),
+    chunk(6, 46, 'Pasó, de ida y de vuelta,', { englishGloss: 'He passed' }),
+  ];
+
+  it('reaches back far enough to include the gender marker and the settled subject', () => {
+    const ctx = precedingContext(morel, 6);
+    expect(ctx).toHaveLength(6);
+    expect(ctx.join('\n')).toContain('como adormecida; = as if drowsy;');
+    expect(ctx.join('\n')).toContain('She moved');
+  });
+
+  it('never includes the chunk itself or anything later', () => {
+    expect(precedingContext(morel, 6).join('\n')).not.toContain('Pasó');
+    expect(precedingContext(morel, 0)).toEqual([]);
+  });
+
+  it('skips untranslated English-source chunks', () => {
     const cs = [
       chunk(0, 0, 'uno'),
-      chunk(1, 1, 'English source', { unavailable: 'translation' }),
+      chunk(1, 1, 'English source', { unavailable: 'translation', englishGloss: null }),
       chunk(2, 2, 'dos'),
-      chunk(3, 3, 'tres'),
-      chunk(4, 4, 'cuatro'),
     ];
-    expect(precedingContext(cs, 4)).toEqual(['dos', 'tres']);
-    expect(precedingContext(cs, 3)).toEqual(['uno', 'dos']);
-    expect(precedingContext(cs, 0)).toEqual([]);
+    expect(precedingContext(cs, 3)).toEqual(['uno = gloss', 'dos = gloss']);
   });
 });
 

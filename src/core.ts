@@ -977,10 +977,19 @@ export function replaceChunk(
   return { ...passage, chunks, lastReadChunkIndex };
 }
 
-// Spanish of the (up to) two chunks before `beforeIndex`, sent with a gloss call
-// so the model can tell who a dropped subject refers to (item 8). Preceding
-// text only — never anything later in the book. Untranslated English-source
-// chunks are skipped: they aren't Spanish.
+// How many preceding chunks ride along with a gloss call. The spec said one or
+// two, but in practice that's too few: in La invención de Morel, "Pasó, de ida
+// y de vuelta" came right after "Se movió con esa libertad…" / "cuando estamos
+// solos." — no gender marker in either — and was glossed "He passed". The
+// feminine clue (adormecida) was four chunks back.
+const CONTEXT_CHUNKS = 6;
+
+// The chunks before `beforeIndex`, each as its Spanish plus the English gloss
+// already shown to the reader, sent with a gloss call so the model can tell who
+// a dropped subject refers to (item 8). The glosses matter as much as the
+// Spanish: they carry the subject already settled ("She moved…"), which the
+// Spanish ("Se movió…") often doesn't. Preceding text only — never anything
+// later in the book. Untranslated English-source chunks are skipped.
 export function precedingContext(
   chunks: ReadonlyArray<Chunk>,
   beforeIndex: number,
@@ -988,8 +997,8 @@ export function precedingContext(
   return chunks
     .slice(0, Math.max(0, beforeIndex))
     .filter((c) => c.unavailable !== 'translation')
-    .slice(-2)
-    .map((c) => c.tlText);
+    .slice(-CONTEXT_CHUNKS)
+    .map((c) => (c.englishGloss ? `${c.tlText} = ${c.englishGloss}` : c.tlText));
 }
 
 // === Word tap (items 7 and 9) ===

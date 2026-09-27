@@ -8,7 +8,9 @@
 // v6: faithful-translation framing; possible_subjunctive role + lemma on verb
 //     annotations (lexicon veto); tightened two-mood triggers; preceding-context
 //     and lexicon-facts blocks in the user message.
-export const PROMPT_VERSION = 'v6';
+// v7: preceding context is the last 6 chunks as Spanish = English gloss pairs
+//     (2 Spanish-only chunks missed gender established a few chunks back).
+export const PROMPT_VERSION = 'v7';
 
 // Default model used by both client cache key and edge function.
 export const MODEL = 'claude-haiku-4-5';
@@ -113,7 +115,7 @@ Note: the Spanish in Example 2 is your translation; the English glosses are the 
 INPUT FORMAT:
 
 The user message is either the plain text to process, or it contains up to three labelled blocks:
-- PRECEDING CONTEXT: the one or two Spanish chunks that come just before this text in the same work. They were already processed. Do NOT chunk, gloss or return them. Use them only to work out who dropped subjects and pronouns refer to, so the English gloss gets the right he/she/they/it. Spanish omits subject pronouns; the context tells you the subject.
+- PRECEDING CONTEXT: the chunks that come just before this text in the same work, one per line, each as "Spanish = English gloss the reader was shown". They were already processed. Do NOT chunk, gloss or return them. Use them to work out who dropped subjects and pronouns refer to, so the English gloss gets the right he/she/they/it. Spanish omits subject pronouns, and a verb like "pasó" or "se movió" says nothing about gender — so read the earlier Spanish for gender markers (adormecida, cansado, ella) and the earlier English glosses for the subject already established ("She moved…"). Keep that same subject unless the Spanish clearly introduces a different one. Never default to "he".
 - LEXICON FACTS: verb forms in the text that a deterministic conjugation table has identified. These are authoritative GIVEN FACTS about mood and tense, not suggestions. Gloss each one accordingly (e.g. an imperfect subjunctive "aullaran" is "would howl / howled", never the future "will howl") and do not re-derive it.
 - TEXT TO PROCESS: the text you must chunk and gloss. Everything in your output comes from this block only.
 
@@ -266,7 +268,7 @@ export function buildUserMessage(
   if (context.length === 0 && lexiconFacts.length === 0) return text;
   const parts: string[] = [];
   if (context.length > 0) {
-    parts.push(`PRECEDING CONTEXT (do not translate or return):\n<<<\n${context.join(' ')}\n>>>`);
+    parts.push(`PRECEDING CONTEXT (do not translate or return):\n<<<\n${context.join('\n')}\n>>>`);
   }
   if (lexiconFacts.length > 0) {
     parts.push(`LEXICON FACTS (authoritative):\n${lexiconFacts}`);

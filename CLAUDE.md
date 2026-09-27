@@ -235,8 +235,10 @@ The `chunk-and-gloss` Edge Function:
    truncation (`stop_reason: max_tokens`), any malformed chunk, an empty gloss,
    or a Spanish input that comes back with >15% of its letters missing all
    count. Every call carries the "faithful translation of a published work —
-   never soften, summarize or omit" framing, the Spanish of the 1–2 preceding
-   chunks as **PRECEDING CONTEXT** (pronoun gender; earlier text only), and any
+   never soften, summarize or omit" framing, the last 6 chunks as
+   "Spanish = English gloss" lines of **PRECEDING CONTEXT** (pronoun gender;
+   earlier text only — 2 Spanish-only chunks weren't enough, see
+   `precedingContext` in `core.ts`), and any
    LEXICON FACTS.
 4. If both fail, runs a **diagnostic call** with a known-benign sentence
    ("Hola, ¿cómo estás hoy?") on Haiku.

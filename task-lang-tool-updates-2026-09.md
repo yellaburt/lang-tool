@@ -180,6 +180,14 @@ follows the codebase:
   The existing Reading mode (with read-aloud-on-advance) plays audio with the
   text visible, then auto-advances. Neither matches, so the new mode is
   `'reveal'` ("Read, listen, reveal").
+- **Item 8 widened after a live failure (v7).** With the spec's "one or two
+  preceding chunks of Spanish", *Pasó, de ida y de vuelta* (La invención de
+  Morel, Part 4) still came out "He passed". The two chunks before it (*Se
+  movió con esa libertad que tenemos* / *cuando estamos solos*) carry no
+  gender; the clue (*adormecida*) was four chunks back. Context is now the
+  last six chunks, each with the English gloss already shown ("She moved…"),
+  and the prompt says to keep the established subject and never default to
+  "he". It's still preceding text only.
 - **Also added (spirit of 6):** strict validation now fails a response on any
   malformed chunk (v5 silently skipped them), on truncation, on an empty gloss,
   and when a Spanish input comes back missing >15% of its letters.
