@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { detectSourceLanguage } from '../supabase/functions/_shared/language';
 import {
+  hasReadableText,
   lookupSpeechEnabled,
   precedingContext,
   replaceChunk,
@@ -89,6 +90,17 @@ describe('upgradeLegacyPlaceholders', () => {
   it('leaves passages without placeholders untouched (same object)', () => {
     const p = passage(raw, [chunk(0, 0, 'Uno es aquí.')]);
     expect(upgradeLegacyPlaceholders(p)).toBe(p);
+  });
+});
+
+describe('hasReadableText', () => {
+  it('treats punctuation-only batches as empty', () => {
+    // Morel Part 4, sentences 153–154: a spaced-out ellipsis split into two
+    // one-character "sentences", which stalled the passage.
+    expect(hasReadableText('. .')).toBe(false);
+    expect(hasReadableText('* * * —')).toBe(false);
+    expect(hasReadableText('Hasta creo haberlos visto.')).toBe(true);
+    expect(hasReadableText('1939.')).toBe(true);
   });
 });
 

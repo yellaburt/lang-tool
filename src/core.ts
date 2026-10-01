@@ -920,6 +920,12 @@ export function unavailableChunk(
   };
 }
 
+// Does the text contain anything to read — a letter or digit? Punctuation-only
+// fragments (". .", "—", "* * *") are skipped as batches and dropped as chunks.
+export function hasReadableText(text: string): boolean {
+  return /[\p{L}\p{N}]/u.test(text);
+}
+
 // One piece of a batch re-cut with shifted boundaries. `sentenceOffset` is the
 // piece's first sentence relative to the batch's first sentence.
 export interface ShiftedPiece {

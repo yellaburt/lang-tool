@@ -8,6 +8,7 @@ import {
   IdGen,
   precedingContext,
   replaceChunk,
+  hasReadableText,
   shiftedPieces,
   splitLyricsIntoLines,
   splitSentences,
@@ -1398,7 +1399,7 @@ async function glossToChunks(
   // punctuation like "." or "—"). Claude occasionally emits these as
   // standalone chunks; they have no audio or learning value and render as
   // empty rows.
-  const data = raw.filter((cg) => /[\p{L}\p{N}]/u.test(cg.tlText));
+  const data = raw.filter((cg) => hasReadableText(cg.tlText));
   const reviewRows: ReviewRow[] = [];
   const rowsFor = (chunk: Chunk, cgs: ReadonlyArray<ChunkAndGloss>) => {
     for (const cg of cgs) {
@@ -1871,6 +1872,21 @@ export function App() {
     const sentenceOffset = processed;
     const startIndex = passage.chunks.length;
 
+    // A batch with no words at all (stray "." "." from a spaced-out ellipsis in
+    // the source) has nothing to translate. Step past it without a call —
+    // sending it made the model echo a bare "." that the filter in
+    // glossToChunks drops, leaving an empty batch and a passage stuck on
+    // "No chunks were produced" forever (Morel Part 4, sentences 153–154).
+    if (!hasReadableText(batchText)) {
+      dispatch({
+        kind: 'append-chunks',
+        passageId,
+        chunks: [],
+        processedSentenceCount: newProcessedCount,
+      });
+      return;
+    }
+
     dispatch({ kind: 'start-batch-fetch', passageId });
 
     void (async () => {
@@ -1935,13 +1951,12 @@ export function App() {
             }
           }
         }
+        // The model answered but nothing usable survived the empty-chunk
+        // filter, although the batch has words. Keep the source visibly
+        // untranslated (with a retry) rather than stalling the passage on an
+        // error that "Try again" would only reproduce.
         if (produced.length === 0) {
-          dispatch({
-            kind: 'mark-passage-error',
-            passageId,
-            message: 'No chunks were produced for this batch.',
-          });
-          return;
+          keepUntranslated(batchText, sentenceOffset, precededByBlankLine);
         }
         dispatch({
           kind: 'append-chunks',
