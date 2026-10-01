@@ -12,6 +12,7 @@ import {
   speechWindow,
   splitBookIntoChapters,
   tenseNote,
+  upcomingItems,
 } from './core';
 import type { ResumeTarget } from './core';
 import { hasApiKey } from './llm';
@@ -2566,6 +2567,24 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     return () => window.removeEventListener('keydown', handler);
   }, [dispatch, lightMode, textMode, revealMode, revealRevealed, lightAwaitingInput, englishRevealed]);
 
+  // The rest of the passage, dimmed below the current chunk, so the scrollbar
+  // spans the whole text and any sentence can be tapped to start there.
+  // Listening and reveal modes are about hearing before seeing, so upcoming
+  // text stays hidden there.
+  const showUpcoming = !listeningMode && !revealMode;
+  const upcoming = useMemo(
+    () => (passage && showUpcoming ? upcomingItems(passage, currentChunkIndex) : []),
+    [passage, currentChunkIndex, showUpcoming],
+  );
+  const jumpTarget =
+    state.ui.jumpTarget !== null && state.ui.jumpTarget.passageId === currentPassageId
+      ? state.ui.jumpTarget
+      : null;
+  const processedSoFar =
+    passage?.processingStatus.kind === 'in-progress'
+      ? passage.processingStatus.processedSentenceCount
+      : 0;
+
   // Where an in-panel Continue (word lookup / grammar) should go, if anywhere.
   // Only the fully manual modes put one there — the parked bar is hidden
   // while a panel is open.
@@ -2716,9 +2735,33 @@ export function ReadingView({ state, dispatch }: ViewProps) {
         </div>
       )}
 
-      {/* Scroll runway inside .reading-scroll: the active line is always the
-          LAST rendered line (the list is filtered to index <=
-          currentChunkIndex), so without space beneath it scrollIntoView
+      {upcoming.length > 0 && (
+        <ol className="upcoming" aria-label="Text ahead — tap a sentence to start reading there">
+          {upcoming.map((item) => (
+            <li key={item.key}>
+              <button
+                type="button"
+                className="upcoming-item"
+                title="Start reading here"
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  dispatch(
+                    item.target.kind === 'chunk'
+                      ? { kind: 'jump-to-chunk', index: item.target.index }
+                      : { kind: 'jump-to-sentence', sentenceIndex: item.target.sentenceIndex },
+                  );
+                }}
+              >
+                {item.text}
+              </button>
+            </li>
+          ))}
+        </ol>
+      )}
+
+      {/* Scroll runway inside .reading-scroll: the active line is the last
+          full-strength line (later text is the dimmed preview above, or
+          hidden in listening/reveal modes), so without space beneath it scrollIntoView
           ({block:'center'}) has nothing to scroll into. This lets the active
           line reach the middle of the visible scroll area on every chunk. */}
       <div className="reading-runway" aria-hidden="true" />
@@ -2855,7 +2898,28 @@ export function ReadingView({ state, dispatch }: ViewProps) {
           has its own bottom sheet, so suppress the badge then (and under the
           settings modal). In light mode the action bar above is the resume
           affordance once Spanish has played, so suppress the badge then too. */}
+      {/* Running ahead to a tapped sentence that wasn't translated yet. Fixed
+          so it's visible wherever the reader scrolled to when they tapped. */}
+      {jumpTarget !== null && (
+        <div className="jump-banner" role="status" aria-live="polite">
+          <span>
+            Preparing text up to there… {Math.max(1, jumpTarget.sentenceIndex - processedSoFar + 1)}{' '}
+            {jumpTarget.sentenceIndex - processedSoFar + 1 === 1 ? 'sentence' : 'sentences'} to go
+          </span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              dispatch({ kind: 'cancel-jump' });
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
       {isPaused &&
+        jumpTarget === null &&
         !(lightMode && spanishTtsDone) &&
         !textMode &&
         !revealMode &&
@@ -3034,6 +3098,19 @@ function SentenceItem({
               )}
             </span>
           ))}
+          <button
+            type="button"
+            className="restart-here"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.currentTarget.blur();
+              dispatch({ kind: 'jump-to-chunk', index: sentence[0]!.index });
+            }}
+            aria-label="Read again from here"
+            title="Read again from here"
+          >
+            ↺
+          </button>
         </div>
         {hasEnglish && (
           <div className="en">

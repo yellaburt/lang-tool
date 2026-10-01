@@ -9,6 +9,7 @@ import {
   precedingContext,
   replaceChunk,
   hasReadableText,
+  jumpLanding,
   shiftedPieces,
   splitLyricsIntoLines,
   splitSentences,
@@ -121,6 +122,11 @@ export interface UiState {
   // A manual "retry translation" on an unavailable chunk, if one is in flight
   // or just failed. One at a time.
   readonly chunkRetry: ChunkRetryUiState | null;
+  // "Start here" on a sentence that isn't translated yet. The batch fetcher
+  // keeps processing (past the usual prefetch lead) until the sentence is
+  // covered, then append-chunks moves the reader there. Null when no jump is
+  // pending.
+  readonly jumpTarget: { readonly passageId: PassageId; readonly sentenceIndex: number } | null;
 }
 
 // Fields every word-lookup state carries, computed at tap time from the chunk
@@ -208,6 +214,12 @@ export type AppAction =
   | { readonly kind: 'go-back' }
   | { readonly kind: 'jump-to-start' }
   | { readonly kind: 'replay-current' }
+  // "Start here" from the scrolled passage. To a chunk that's already
+  // translated (earlier text, or upcoming text already processed): jump now.
+  // To a sentence not yet translated: set jumpTarget and process up to it.
+  | { readonly kind: 'jump-to-chunk'; readonly index: number }
+  | { readonly kind: 'jump-to-sentence'; readonly sentenceIndex: number }
+  | { readonly kind: 'cancel-jump' }
   | { readonly kind: 'toggle-pause' }
   | { readonly kind: 'set-speech-pace'; readonly multiplier: number }
   | { readonly kind: 'set-read-pace'; readonly multiplier: number }
@@ -345,6 +357,7 @@ function freshUiState(view: View): UiState {
     grammarPanel: null,
     speechNonce: 0,
     chunkRetry: null,
+    jumpTarget: null,
   };
 }
 
@@ -389,7 +402,13 @@ function advanceToNextChunk(state: AppState): AppState {
   if (passageId === null) return state;
   const passage = state.learner.passages[passageId];
   if (!passage) return state;
-  const next = setCurrentChunkIndex(state, passage.lastReadChunkIndex + 1);
+  return moveToChunk(state, passage.lastReadChunkIndex + 1);
+}
+
+// Move the reader to chunk `index` (advance, or a "start here" jump) with the
+// same fresh-chunk treatment as advancing.
+function moveToChunk(state: AppState, index: number): AppState {
+  const next = setCurrentChunkIndex(state, index);
   return {
     ...next,
     ui: {
@@ -545,7 +564,7 @@ function reducer(state: AppState, action: AppAction): AppState {
         state.ui.view === 'processing' &&
         state.ui.currentPassageId === action.passageId &&
         newChunks.length > 0;
-      return {
+      const appended: AppState = {
         learner: {
           ...state.learner,
           passages: {
@@ -559,6 +578,17 @@ function reducer(state: AppState, action: AppAction): AppState {
           activeBatchFetch: null,
         },
       };
+      // A pending "start here" on not-yet-translated text: once this batch
+      // covers the target, move the reader there.
+      const target = state.ui.jumpTarget;
+      if (target?.passageId === action.passageId) {
+        const landing = jumpLanding(updatedPassage, target.sentenceIndex);
+        if (landing !== null) {
+          const moved = moveToChunk(appended, landing);
+          return { ...moved, ui: { ...moved.ui, jumpTarget: null } };
+        }
+      }
+      return appended;
     }
 
     case 'mark-passage-error': {
@@ -588,6 +618,9 @@ function reducer(state: AppState, action: AppAction): AppState {
           view: isFirstBatchError ? 'paste' : state.ui.view,
           processingError: isFirstBatchError ? action.message : state.ui.processingError,
           activeBatchFetch: null,
+          // A pending jump can't land on a passage that stopped processing.
+          jumpTarget:
+            state.ui.jumpTarget?.passageId === action.passageId ? null : state.ui.jumpTarget,
         },
       };
     }
@@ -774,6 +807,42 @@ function reducer(state: AppState, action: AppAction): AppState {
           speechNonce: state.ui.speechNonce + 1,
         },
       };
+
+    case 'jump-to-chunk': {
+      const passageId = state.ui.currentPassageId;
+      const passage = passageId !== null ? state.learner.passages[passageId] : undefined;
+      if (!passage || action.index < 0 || action.index >= passage.chunks.length) return state;
+      const moved = moveToChunk(state, action.index);
+      return { ...moved, ui: { ...moved.ui, jumpTarget: null } };
+    }
+
+    case 'jump-to-sentence': {
+      const passageId = state.ui.currentPassageId;
+      const passage = passageId !== null ? state.learner.passages[passageId] : undefined;
+      if (!passage || passageId === null) return state;
+      // Already translated (e.g. a batch landed since the tap): jump now.
+      const landing = jumpLanding(passage, action.sentenceIndex);
+      if (landing !== null) {
+        const moved = moveToChunk(state, landing);
+        return { ...moved, ui: { ...moved.ui, jumpTarget: null } };
+      }
+      // Otherwise pause where we are and let the batch fetcher run ahead;
+      // append-chunks moves the reader once the target is covered.
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          jumpTarget: { passageId, sentenceIndex: action.sentenceIndex },
+          isPaused: true,
+          wordLookup: null,
+          grammarPanel: null,
+        },
+      };
+    }
+
+    case 'cancel-jump':
+      // Stop running ahead. Whatever was already translated stays.
+      return { ...state, ui: { ...state.ui, jumpTarget: null, isPaused: false } };
 
     case 'toggle-pause': {
       // Pause semantics: pause/resume the in-flight TTS in place. The speech
@@ -970,6 +1039,7 @@ function reducer(state: AppState, action: AppAction): AppState {
           ...freshPhaseFlags(),
           isPaused: false,
           processingError: null,
+          jumpTarget: null,
         },
       };
     }
@@ -1120,6 +1190,7 @@ function reducer(state: AppState, action: AppAction): AppState {
           currentPassageId: null,
           ...freshPhaseFlags(),
           isPaused: false,
+          jumpTarget: null,
         },
       };
 
@@ -1839,8 +1910,12 @@ export function App() {
     // to need more.
     const chunksRemaining =
       passage.chunks.length - passage.lastReadChunkIndex - 1;
+    // (c) a "start here" on untranslated text is pending: keep going, past
+    // the usual prefetch lead, until the target sentence is covered.
+    const target = state.ui.jumpTarget;
+    const runningAhead = target?.passageId === passageId && processed <= target.sentenceIndex;
     const needsFetch =
-      passage.chunks.length === 0 || chunksRemaining <= PREFETCH_LEAD_CHUNKS;
+      passage.chunks.length === 0 || chunksRemaining <= PREFETCH_LEAD_CHUNKS || runningAhead;
     if (!needsFetch) return;
 
     // Compute the next batch from the local source split. Lyrics mode batches
@@ -1972,6 +2047,7 @@ export function App() {
   }, [
     state.ui.currentPassageId,
     state.ui.activeBatchFetch,
+    state.ui.jumpTarget,
     state.learner.passages,
     dispatch,
   ]);

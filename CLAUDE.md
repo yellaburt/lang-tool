@@ -119,6 +119,18 @@ Controls visible at the top of the reading view:
   heading also shows the current mode inline (e.g. "Reading mode … Light").
   Sections default collapsed every time the modal opens.
 
+**Scroll anywhere, start anywhere.** Below the current chunk, the rest of the
+passage renders dimmed (Spanish only, no English), so the scrollbar spans the
+whole text. Tap a sentence to start there (`upcomingItems`, `core.ts`). If it's
+already translated the reader jumps at once; if not, `jumpTarget` makes the
+batch fetcher run past its usual 3-chunk lead until the sentence is covered
+(a fixed "Preparing text up to there… N sentences to go" banner with Cancel),
+then `append-chunks` lands the reader there (`jumpLanding`). It's sequential:
+about 3–5 s per 2 sentences, so a far jump takes minutes. Earlier sentences
+carry a small ↺ "read again from here". The dimmed text ahead is hidden in
+Listening and Read-listen-reveal modes, where seeing it first would spoil the
+listening.
+
 Keyboard shortcuts: Space (pause/resume), ←/→ (back/next), R (replay),
 Home (jump to start).
 

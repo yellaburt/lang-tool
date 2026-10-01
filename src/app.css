@@ -1765,6 +1765,91 @@ html[data-theme='high-contrast']:not([data-highlight-subjunctive='off']) .mood-v
   background: #ffe9a8;
 }
 
+/* ===== Scrollable passage: text ahead + "start here" =====
+   Everything after the current chunk renders dimmed below it (Spanish only,
+   no English), so the scrollbar covers the whole passage. Each sentence is one
+   tap target that starts reading there. Hidden in Listening and Read-listen-
+   reveal modes so upcoming text doesn't spoil the listening. */
+.upcoming {
+  list-style: none;
+  margin: 1.5rem 0 0;
+  padding: 0;
+  border-top: 1px dashed var(--surface-border);
+  padding-top: 0.75rem;
+}
+
+.upcoming-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+  font: inherit;
+  font-size: 1.05rem;
+  line-height: 1.5;
+  color: var(--text);
+  opacity: 0.42;
+  cursor: pointer;
+}
+
+.upcoming-item:hover,
+.upcoming-item:focus-visible {
+  opacity: 0.8;
+  background: rgba(91, 141, 239, 0.08);
+}
+
+/* Read-again-from-here on an earlier sentence. Small and muted so the read
+   text doesn't fill up with buttons. */
+.restart-here {
+  background: none;
+  border: none;
+  padding: 0 0.3rem;
+  margin-left: 0.2rem;
+  font: inherit;
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.restart-here:hover {
+  opacity: 1;
+}
+
+/* Running ahead to untranslated text: fixed so it's visible from wherever the
+   reader scrolled to when they tapped. Same family as .paused-badge. */
+.jump-banner {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(0.5rem + env(safe-area-inset-bottom));
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  white-space: nowrap;
+  padding: 0.5rem 0.6rem 0.5rem 1.2rem;
+  font-size: 0.95rem;
+  background: #e8f0fe;
+  border: 1px solid #a9c1f2;
+  border-radius: 999px;
+  color: #1f3f86;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
+}
+
+.jump-banner button {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.75rem;
+  border: 1px solid #a9c1f2;
+  border-radius: 999px;
+  background: #fff;
+  color: #1f3f86;
+  cursor: pointer;
+}
+
 /* Light mode: the two-button "park" bar shown after a chunk's Spanish audio
    plays. On mobile it's an in-flow footer of the reading container (the last
    flex child) rather than a fixed overlay: this keeps it inside the dynamic

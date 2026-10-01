@@ -5,7 +5,9 @@ import { describe, expect, it } from 'vitest';
 import { detectSourceLanguage } from '../supabase/functions/_shared/language';
 import {
   hasReadableText,
+  jumpLanding,
   lookupSpeechEnabled,
+  upcomingItems,
   precedingContext,
   replaceChunk,
   shiftedPieces,
@@ -90,6 +92,48 @@ describe('upgradeLegacyPlaceholders', () => {
   it('leaves passages without placeholders untouched (same object)', () => {
     const p = passage(raw, [chunk(0, 0, 'Uno es aquí.')]);
     expect(upgradeLegacyPlaceholders(p)).toBe(p);
+  });
+});
+
+describe('upcomingItems + jumpLanding', () => {
+  const raw = 'Uno es aquí. Dos es allá y más. Tres. . . Cuatro es fin. Cinco.';
+  // Sentences: 0 Uno, 1 Dos, 2 Tres, 3 ".", 4 ".", 5 Cuatro, 6 Cinco
+  const cs = [
+    chunk(0, 0, 'Uno es aquí.'),
+    chunk(1, 1, 'Dos es allá'),
+    chunk(2, 1, 'y más.'),
+    chunk(3, 2, 'Tres.'),
+  ];
+  const p = passage(raw, cs, {
+    sentenceCount: 7,
+    processingStatus: { kind: 'in-progress', processedSentenceCount: 5 },
+  });
+
+  it('lists the rest of the current sentence, later chunks, then untranslated sentences', () => {
+    const items = upcomingItems(p, 1);
+    expect(items.map((i) => i.text)).toEqual(['y más.', 'Tres.', 'Cuatro es fin.', 'Cinco.']);
+    expect(items.map((i) => i.target)).toEqual([
+      { kind: 'chunk', index: 2 },
+      { kind: 'chunk', index: 3 },
+      { kind: 'sentence', sentenceIndex: 5 },
+      { kind: 'sentence', sentenceIndex: 6 },
+    ]);
+  });
+
+  it('lists nothing past the end of a finished passage', () => {
+    expect(upcomingItems({ ...p, processingStatus: { kind: 'complete' } }, 3)).toEqual([]);
+  });
+
+  it('waits until the target is translated, then lands on its first chunk', () => {
+    expect(jumpLanding(p, 5)).toBeNull();
+    const more = {
+      ...p,
+      chunks: [...cs, chunk(4, 5, 'Cuatro es fin.')],
+      processingStatus: { kind: 'in-progress' as const, processedSentenceCount: 7 },
+    };
+    expect(jumpLanding(more, 5)).toBe(4);
+    // A skipped punctuation-only target lands on the next real chunk.
+    expect(jumpLanding(more, 3)).toBe(4);
   });
 });
 

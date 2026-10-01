@@ -983,6 +983,79 @@ export function replaceChunk(
   return { ...passage, chunks, lastReadChunkIndex };
 }
 
+// One block of not-yet-reached text in the scrollable reading view: either
+// already-translated chunks (jump straight there) or a source sentence that
+// hasn't been translated yet (translate up to it, then jump).
+export interface UpcomingItem {
+  readonly key: string;
+  readonly text: string;
+  readonly target:
+    | { readonly kind: 'chunk'; readonly index: number }
+    | { readonly kind: 'sentence'; readonly sentenceIndex: number };
+}
+
+// Everything after the reader's current chunk, one item per sentence: first
+// the processed chunks (grouped by sentence, so the rest of the current
+// sentence comes first), then the raw source sentences/lines that haven't
+// been processed yet. Punctuation-only sentences are left out — they're never
+// processed into chunks (see hasReadableText).
+export function upcomingItems(passage: Passage, currentChunkIndex: number): UpcomingItem[] {
+  const items: UpcomingItem[] = [];
+  let group: Chunk[] = [];
+  const flush = () => {
+    const first = group[0];
+    if (first) {
+      items.push({
+        key: `c${first.id}`,
+        text: group.map((c) => c.tlText).join(' '),
+        target: { kind: 'chunk', index: first.index },
+      });
+    }
+    group = [];
+  };
+  for (const c of passage.chunks.slice(currentChunkIndex + 1)) {
+    if (group[0] && group[0].sentenceIndex !== c.sentenceIndex) flush();
+    group.push(c);
+  }
+  flush();
+
+  const status = passage.processingStatus;
+  if (status.kind === 'complete') return items;
+  // Where processing stopped. An errored passage resumes after its last chunk
+  // (same rule as retry-passage-processing).
+  const processed =
+    status.kind === 'in-progress'
+      ? status.processedSentenceCount
+      : passage.chunks.reduce((m, c) => Math.max(m, c.sentenceIndex + 1), 0);
+  const units =
+    passage.chunkingMode === 'lyrics'
+      ? splitLyricsIntoLines(passage.rawText).map((l) => l.text)
+      : splitSentences(passage.rawText);
+  units.forEach((text, sentenceIndex) => {
+    if (sentenceIndex < processed || !hasReadableText(text)) return;
+    items.push({ key: `s${sentenceIndex}`, text, target: { kind: 'sentence', sentenceIndex } });
+  });
+  return items;
+}
+
+// Where a pending "start here" on sentence `sentenceIndex` lands: the first
+// chunk at or after that sentence, once processing has covered it. Null while
+// it's still being translated. A target that was skipped (punctuation only)
+// lands on the next chunk; on a finished passage with nothing after it, the
+// last chunk.
+export function jumpLanding(passage: Passage, sentenceIndex: number): number | null {
+  const covered =
+    passage.processingStatus.kind === 'complete' ||
+    (passage.processingStatus.kind === 'in-progress' &&
+      passage.processingStatus.processedSentenceCount > sentenceIndex);
+  if (!covered) return null;
+  const at = passage.chunks.findIndex((c) => c.sentenceIndex >= sentenceIndex);
+  if (at >= 0) return at;
+  // Covered, but only skipped punctuation so far: keep waiting unless done.
+  if (passage.processingStatus.kind === 'complete') return Math.max(0, passage.chunks.length - 1);
+  return null;
+}
+
 // How many preceding chunks ride along with a gloss call. The spec said one or
 // two, but in practice that's too few: in La invención de Morel, "Pasó, de ida
 // y de vuelta" came right after "Se movió con esa libertad…" / "cuando estamos
