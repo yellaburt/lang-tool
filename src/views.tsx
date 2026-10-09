@@ -2569,6 +2569,26 @@ export function ReadingView({ state, dispatch }: ViewProps) {
     return () => window.removeEventListener('keydown', handler);
   }, [dispatch, lightMode, textMode, revealMode, revealRevealed, lightAwaitingInput, englishRevealed]);
 
+  // Highlighting text (the native copy selection) in a chunk counts the same as
+  // looking a word up there: Resume / Continue restarts at that sentence. The
+  // chunk is remembered in UI state rather than read at click time, because
+  // tapping a control collapses the selection before the click arrives.
+  // Collapsing never clears it — navigation does (freshPhaseFlags).
+  const selectionChunkId = state.ui.selectionChunkId;
+  useEffect(() => {
+    function onSelectionChange() {
+      const sel = document.getSelection();
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+      const node = sel.anchorNode;
+      const el = node instanceof Element ? node : node?.parentElement ?? null;
+      const id = el?.closest('[data-chunk-id]')?.getAttribute('data-chunk-id') ?? null;
+      if (id === null || id === selectionChunkId) return;
+      dispatch({ kind: 'text-selected', chunkId: id as ChunkId });
+    }
+    document.addEventListener('selectionchange', onSelectionChange);
+    return () => document.removeEventListener('selectionchange', onSelectionChange);
+  }, [dispatch, selectionChunkId]);
+
   // The rest of the passage, dimmed below the current chunk, so the scrollbar
   // spans the whole text and any sentence can be tapped to start there.
   // Listening and reveal modes are about hearing before seeing, so upcoming
@@ -3100,7 +3120,7 @@ function SentenceItem({
       <li className={'sentence past' + (stanzaBreak ? ' stanza-break' : '')}>
         <div className="tl">
           {sentence.map((c, i) => (
-            <span key={c.id}>
+            <span key={c.id} data-chunk-id={c.id}>
               {i > 0 && ' '}
               <ChunkText chunk={c} lookupWordRef={lookupWordRef} dispatch={dispatch} />
               {c.unavailable === 'translation' && (
@@ -3126,13 +3146,13 @@ function SentenceItem({
           <div className="en">
             {sentence.map((c, i) =>
               c.unavailable === 'gloss' ? (
-                <span key={c.id}>
+                <span key={c.id} data-chunk-id={c.id}>
                   {i > 0 && ' '}
                   <span className="not-translated">[not translated]</span>
                   <RetryTranslation chunk={c} chunkRetry={chunkRetry} dispatch={dispatch} />
                 </span>
               ) : c.englishGloss ? (
-                <span key={c.id}>
+                <span key={c.id} data-chunk-id={c.id}>
                   {i > 0 && ' '}
                   {c.englishGloss}
                 </span>
@@ -3184,7 +3204,7 @@ function SentenceItem({
           if (isCurrentSub && isFading) rowCls += ' fading';
           if (hideForListening) rowCls += ' listening-hidden';
           return (
-            <div key={c.id} className={rowCls}>
+            <div key={c.id} className={rowCls} data-chunk-id={c.id}>
               <div className="pair-tl">
                 {hideForListening ? (
                   <span className="listening-placeholder" aria-hidden="true">

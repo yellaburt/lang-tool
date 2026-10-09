@@ -175,7 +175,13 @@ Home (jump to start).
   panel (word lookup or grammar) is on a chunk other than the current one,
   Resume / Continue restarts at the **first chunk of that sentence** instead of
   carrying on where the reader was (`panelRestartIndex`, `core.ts`, applied in
-  `toggle-pause`, `reading-continue`, `reveal-continue`). Pete's workflow: the
+  `toggle-pause`, `reading-continue`, `reveal-continue`). **Highlighting text**
+  (the native copy selection) in a chunk counts the same way: a `selectionchange`
+  listener in ReadingView maps the selection to the nearest `data-chunk-id`
+  and stores it as `ui.selectionChunkId`. It's remembered rather than read at
+  click time because tapping a control collapses the selection before the
+  click lands; navigation clears it (`freshPhaseFlags`). Lookup/grammar win
+  over a stale selection. Pete's workflow: the
   scrubber for rough positioning, a tap on a word for fine. A panel on the
   current chunk keeps the old behaviour (resume the chunk; advance in the
   manual modes), so Reading mode's in-panel Continue still advances.

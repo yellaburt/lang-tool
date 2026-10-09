@@ -116,6 +116,12 @@ export interface UiState {
   // opening one closes the other so the user never juggles two bottom sheets
   // on mobile.
   readonly grammarPanel: GrammarPanelUiState | null;
+  // The chunk the reader last highlighted text in (native copy selection),
+  // or null. Treated like an open lookup for Resume / Continue: if it's on
+  // another sentence, reading restarts there. Set by the selectionchange
+  // listener in ReadingView; cleared by navigation (freshPhaseFlags), never
+  // by the selection collapsing — tapping a control collapses it first.
+  readonly selectionChunkId: ChunkId | null;
   // Bumped by every replay. The Spanish speech effects list it as a dependency
   // so a replay restarts the utterance even when no phase flag changes — e.g.
   // replaying mid-audio in reveal mode's hidden phase.
@@ -221,6 +227,8 @@ export type AppAction =
   | { readonly kind: 'jump-to-chunk'; readonly index: number }
   | { readonly kind: 'jump-to-sentence'; readonly sentenceIndex: number }
   | { readonly kind: 'cancel-jump' }
+  // Text was highlighted inside a chunk (see UiState.selectionChunkId).
+  | { readonly kind: 'text-selected'; readonly chunkId: ChunkId }
   | { readonly kind: 'toggle-pause' }
   | { readonly kind: 'set-speech-pace'; readonly multiplier: number }
   | { readonly kind: 'set-read-pace'; readonly multiplier: number }
@@ -339,6 +347,9 @@ function freshPhaseFlags() {
     reReadDone: false,
     englishRevealed: false,
     readingSpeaking: false,
+    // Not a phase flag, but every navigation spreads this in, and a highlight
+    // belongs to the place the reader is leaving.
+    selectionChunkId: null,
   } as const;
 }
 
@@ -357,6 +368,7 @@ function freshUiState(view: View): UiState {
     wordLookup: null,
     grammarPanel: null,
     speechNonce: 0,
+    selectionChunkId: null,
     chunkRetry: null,
     jumpTarget: null,
   };
@@ -436,7 +448,11 @@ function panelRestart(state: AppState): number | null {
   if (passageId === null) return null;
   const passage = state.learner.passages[passageId];
   if (!passage) return null;
-  const panelChunkId = state.ui.wordLookup?.chunkId ?? state.ui.grammarPanel?.chunkId ?? null;
+  const panelChunkId =
+    state.ui.wordLookup?.chunkId ??
+    state.ui.grammarPanel?.chunkId ??
+    state.ui.selectionChunkId ??
+    null;
   return panelRestartIndex(passage, passage.lastReadChunkIndex, panelChunkId);
 }
 
@@ -852,6 +868,10 @@ function reducer(state: AppState, action: AppAction): AppState {
         },
       };
     }
+
+    case 'text-selected':
+      if (state.ui.selectionChunkId === action.chunkId) return state;
+      return { ...state, ui: { ...state.ui, selectionChunkId: action.chunkId } };
 
     case 'cancel-jump':
       // Stop running ahead. Whatever was already translated stays.
