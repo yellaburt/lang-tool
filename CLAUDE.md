@@ -131,6 +131,19 @@ carry a small ↺ "read again from here". The dimmed text ahead is hidden in
 Listening and Read-listen-reveal modes, where seeing it first would spoil the
 listening.
 
+**Scrubber.** A full-width position slider sits under the control bar
+(`PassageScrubber`, `views.tsx`). It exists because Android Chrome's scrollbar
+is a thin fading overlay that can't be grabbed, so on a phone the dimmed text
+alone meant flick-scrolling through a whole chapter to move far. The thumb maps
+onto the passage's sentence units (`passageUnits`, `core.ts`); releasing it
+dispatches `jump-to-sentence`, so it reuses the same instant-jump / run-ahead
+path as tapping a sentence. While held, a tooltip shows "Sentence X of N" plus
+the target's opening words (`scrubPreview`); the words are omitted in Listening
+and Read-listen-reveal modes. The release is caught both on the input and at
+the window (a finger that slid off the track), via a ref so a quick tap can't
+beat React's re-render. `touch-action: none` on the input stops a slightly
+vertical drag from triggering Chrome's pull-to-refresh.
+
 Keyboard shortcuts: Space (pause/resume), ←/→ (back/next), R (replay),
 Home (jump to start).
 

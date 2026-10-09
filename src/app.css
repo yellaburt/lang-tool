@@ -854,6 +854,112 @@ button.ghost {
   border-radius: 4px;
 }
 
+/* ===== Passage scrubber (position slider under the control bar) =====
+   The phone's scrollbar can't be grabbed, so this is the far-jump control
+   there. Full-width track, a thumb big enough for a fingertip, and
+   touch-action: none so a slightly vertical drag on the thumb doesn't start
+   Chrome's pull-to-refresh (which would reload the app mid-read). */
+.scrubber {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: -0.5rem 0 0.75rem;
+}
+
+.scrubber-range {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.scrubber-range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-border);
+}
+
+.scrubber-range::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-border);
+}
+
+.scrubber-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  margin-top: -8px; /* centre the thumb on the 6px track */
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  background: var(--button-bg);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.scrubber-range::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  background: var(--button-bg);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.scrubber-range:focus-visible {
+  outline: 2px solid var(--button-bg);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.scrubber-percent {
+  flex: 0 0 auto;
+  min-width: 2.6em;
+  text-align: right;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+/* Drag tooltip: overlays the top of the text instead of pushing it down, so
+   the header doesn't jump while the thumb is held. */
+.scrubber-tip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  margin-top: 0.25rem;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  font-size: 0.9rem;
+}
+
+.scrubber-tip-pos {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.scrubber-tip-text {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ===== Header actions (gear + nav buttons) ===== */
 
 .header-actions {

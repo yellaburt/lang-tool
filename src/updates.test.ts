@@ -8,6 +8,8 @@ import {
   jumpLanding,
   lookupSpeechEnabled,
   upcomingItems,
+  passageUnits,
+  scrubPreview,
   precedingContext,
   replaceChunk,
   shiftedPieces,
@@ -134,6 +136,30 @@ describe('upcomingItems + jumpLanding', () => {
     expect(jumpLanding(more, 5)).toBe(4);
     // A skipped punctuation-only target lands on the next real chunk.
     expect(jumpLanding(more, 3)).toBe(4);
+  });
+});
+
+describe('scrubber position', () => {
+  const raw = 'Uno es aquí. Dos es allá y más. Tres. . . Cuatro es fin. Cinco.';
+  const cs = [
+    chunk(0, 0, 'Uno es aquí.'),
+    chunk(1, 1, 'Dos es allá'),
+    chunk(2, 1, 'y más.'),
+    chunk(3, 2, 'Tres.'),
+  ];
+  const p = passage(raw, cs, {
+    sentenceCount: 7,
+    processingStatus: { kind: 'in-progress', processedSentenceCount: 5 },
+  });
+
+  it('counts every source unit, punctuation-only ones included', () => {
+    expect(passageUnits(p)).toHaveLength(7);
+  });
+
+  it('previews a unit by its opening words', () => {
+    expect(scrubPreview('Dos es allá y más.')).toBe('Dos es allá y más.');
+    expect(scrubPreview('a b c d e f g h i j', 3)).toBe('a b c…');
+    expect(scrubPreview('   ')).toBe('');
   });
 });
 

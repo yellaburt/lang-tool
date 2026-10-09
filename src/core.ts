@@ -882,10 +882,7 @@ function isLegacyPlaceholder(c: Chunk): boolean {
 // retried like new ones. Applied on load; persists on the passage's next write.
 export function upgradeLegacyPlaceholders(passage: Passage): Passage {
   if (!passage.chunks.some(isLegacyPlaceholder)) return passage;
-  const units =
-    passage.chunkingMode === 'lyrics'
-      ? splitLyricsIntoLines(passage.rawText).map((l) => l.text)
-      : splitSentences(passage.rawText);
+  const units = passageUnits(passage);
   const chunks = passage.chunks.map((c, i) => {
     if (!isLegacyPlaceholder(c)) return c;
     const next = passage.chunks[i + 1];
@@ -994,6 +991,22 @@ export interface UpcomingItem {
     | { readonly kind: 'sentence'; readonly sentenceIndex: number };
 }
 
+// The passage's source units, indexed by the `sentenceIndex` chunks carry:
+// sentences for prose, lines for lyrics. Includes punctuation-only units (they
+// hold their index even though they never become chunks).
+export function passageUnits(passage: Passage): ReadonlyArray<string> {
+  return passage.chunkingMode === 'lyrics'
+    ? splitLyricsIntoLines(passage.rawText).map((l) => l.text)
+    : splitSentences(passage.rawText);
+}
+
+// The opening words of a unit, for the scrubber's drag tooltip.
+export function scrubPreview(text: string, maxWords = 8): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return words.join(' ');
+  return words.slice(0, maxWords).join(' ') + '…';
+}
+
 // Everything after the reader's current chunk, one item per sentence: first
 // the processed chunks (grouped by sentence, so the rest of the current
 // sentence comes first), then the raw source sentences/lines that haven't
@@ -1027,10 +1040,7 @@ export function upcomingItems(passage: Passage, currentChunkIndex: number): Upco
     status.kind === 'in-progress'
       ? status.processedSentenceCount
       : passage.chunks.reduce((m, c) => Math.max(m, c.sentenceIndex + 1), 0);
-  const units =
-    passage.chunkingMode === 'lyrics'
-      ? splitLyricsIntoLines(passage.rawText).map((l) => l.text)
-      : splitSentences(passage.rawText);
+  const units = passageUnits(passage);
   units.forEach((text, sentenceIndex) => {
     if (sentenceIndex < processed || !hasReadableText(text)) return;
     items.push({ key: `s${sentenceIndex}`, text, target: { kind: 'sentence', sentenceIndex } });

@@ -9,6 +9,8 @@ import {
   isBookLikeFolder,
   lookupSpeechEnabled,
   passagePercentRead,
+  passageUnits,
+  scrubPreview,
   speechWindow,
   splitBookIntoChapters,
   tenseNote,
@@ -2619,6 +2621,14 @@ export function ReadingView({ state, dispatch }: ViewProps) {
         </header>
 
         <ControlBar isPaused={isPaused} dispatch={dispatch} />
+        <PassageScrubber
+          key={passage.id}
+          passage={passage}
+          currentChunkIndex={currentChunkIndex}
+          pendingSentenceIndex={jumpTarget?.sentenceIndex ?? null}
+          showPreview={showUpcoming}
+          dispatch={dispatch}
+        />
       </div>
 
       {/* Inner scroll container sized to the dynamic (actually-visible)
@@ -3238,6 +3248,107 @@ function SentenceItem({
 }
 
 // === Control bar ===
+
+// === Passage scrubber ===
+//
+// A full-width position slider under the control bar. Phones have no grabbable
+// scrollbar (Android Chrome draws a thin fading overlay), so without this the
+// only way to move far through a chapter is flick-scrolling the dimmed text.
+// The thumb maps 0..N-1 onto the passage's sentence units; releasing it goes
+// through `jump-to-sentence`, so an already-translated target jumps at once and
+// an untranslated one runs the batch fetcher ahead with the usual banner. A
+// tooltip while dragging shows the target sentence's opening words (hidden in
+// the hear-before-see modes, where the dimmed text is hidden too).
+interface PassageScrubberProps {
+  readonly passage: Passage;
+  readonly currentChunkIndex: number;
+  // A jump still being prepared: the thumb sits on it rather than snapping
+  // back to the chunk the reader is parked on.
+  readonly pendingSentenceIndex: number | null;
+  readonly showPreview: boolean;
+  readonly dispatch: (action: AppAction) => void;
+}
+
+function PassageScrubber({
+  passage,
+  currentChunkIndex,
+  pendingSentenceIndex,
+  showPreview,
+  dispatch,
+}: PassageScrubberProps) {
+  // Keyed on the text, not the passage object: every batch that lands makes a
+  // new passage, and re-splitting a long chapter on each render adds up.
+  const units = useMemo(
+    () => passageUnits(passage),
+    [passage.rawText, passage.chunkingMode],
+  );
+  const total = units.length;
+  const current = passage.chunks[currentChunkIndex]?.sentenceIndex ?? 0;
+  // The value while the thumb is held, null when idle. Mirrored in a ref so the
+  // window-level release listener (registered once) never reads a stale value —
+  // a quick tap can release before React has re-rendered with the new draft.
+  const [draft, setDraftState] = useState<number | null>(null);
+  const draftRef = useRef<number | null>(null);
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  const setDraft = (v: number | null) => {
+    draftRef.current = v;
+    setDraftState(v);
+  };
+
+  const commit = useCallback(() => {
+    const target = draftRef.current;
+    if (target === null) return;
+    setDraft(null);
+    if (target === currentRef.current) return;
+    dispatch({ kind: 'jump-to-sentence', sentenceIndex: target });
+  }, [dispatch]);
+
+  // Chrome's slider releases over the input itself, but a finger that slid off
+  // the track releases elsewhere — catch that at the window.
+  useEffect(() => {
+    window.addEventListener('pointerup', commit);
+    window.addEventListener('pointercancel', commit);
+    return () => {
+      window.removeEventListener('pointerup', commit);
+      window.removeEventListener('pointercancel', commit);
+    };
+  }, [commit]);
+
+  if (total < 2) return null;
+
+  const shown = draft ?? pendingSentenceIndex ?? current;
+  const percent = Math.round((shown / (total - 1)) * 100);
+  const preview = draft !== null && showPreview ? scrubPreview(units[draft] ?? '') : '';
+
+  return (
+    <div className="scrubber">
+      <input
+        type="range"
+        className="scrubber-range"
+        min={0}
+        max={total - 1}
+        step={1}
+        value={shown}
+        aria-label="Position in passage"
+        aria-valuetext={`Sentence ${shown + 1} of ${total}`}
+        onChange={(e) => setDraft(Number(e.target.value))}
+        onPointerUp={commit}
+        onKeyUp={commit}
+        onBlur={commit}
+      />
+      <span className="scrubber-percent">{percent}%</span>
+      {draft !== null && (
+        <div className="scrubber-tip" role="status" aria-live="polite">
+          <span className="scrubber-tip-pos">
+            Sentence {draft + 1} of {total}
+          </span>
+          {preview && <span className="scrubber-tip-text">{preview}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface ControlBarProps {
   readonly isPaused: boolean;
