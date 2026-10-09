@@ -181,7 +181,10 @@ Home (jump to start).
   and stores it as `ui.selectionChunkId`. It's remembered rather than read at
   click time because tapping a control collapses the selection before the
   click lands; navigation clears it (`freshPhaseFlags`). Lookup/grammar win
-  over a stale selection. Pete's workflow: the
+  over a stale selection. In **Reading mode with read-aloud-on-advance on**,
+  the restart lands directly in the SPEAKING phase (`readingSpeaking: true`),
+  so one Continue both moves to the sentence and reads it; landing silent and
+  needing a second press was the complaint. With read-aloud off it just lands. Pete's workflow: the
   scrubber for rough positioning, a tap on a word for fine. A panel on the
   current chunk keeps the old behaviour (resume the chunk; advance in the
   manual modes), so Reading mode's in-panel Continue still advances.

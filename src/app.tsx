@@ -988,9 +988,16 @@ function reducer(state: AppState, action: AppAction): AppState {
       };
 
     case 'reading-continue': {
-      // Continue from inside a panel on another sentence: restart there.
+      // Continue with a lookup / highlight on another sentence: restart there,
+      // and with readAloudOnAdvance on go straight into SPEAKING so the one
+      // press both moves the reader and reads the sentence — landing silent
+      // and needing a second Continue was the complaint.
       const restart = panelRestart(state);
-      if (restart !== null) return moveToChunk(state, restart);
+      if (restart !== null) {
+        const moved = moveToChunk(state, restart);
+        if (!state.learner.settings.readAloudOnAdvance) return moved;
+        return { ...moved, ui: { ...moved.ui, readingSpeaking: true } };
+      }
       // During SPEAKING, Continue skips the rest of the audio and advances now.
       if (state.ui.readingSpeaking) return advanceToNextChunk(state);
       // From READING: hide the English immediately, then branch on the setting.
