@@ -90,7 +90,8 @@ their own remembered mode:
 - **Reading**: text-first and silent; Show/Hide English + Continue. With
   `readAloudOnAdvance` on, Continue plays the Spanish once (text visible) and
   then advances.
-- **Read, listen, reveal** (`'reveal'`): the Spanish shows silently → Continue
+- **Hide while listening** (`'reveal'`; was labelled "Read, listen, reveal"
+  until Oct 2026 — Pete couldn't find it): the Spanish shows silently → Continue
   **hides** it and plays the chunk audio (Replay available while hidden;
   Continue skips to the reveal) → when the audio ends the Spanish reappears and
   the English stays behind a Show English tap → Continue advances. Never
@@ -170,6 +171,14 @@ Home (jump to start).
   chunks only.
 - Tap × on the panel to dismiss without resuming. Tap ▶ Resume on the
   control bar to dismiss AND continue reading.
+- **Tapping a word in another sentence moves the reader there.** If the open
+  panel (word lookup or grammar) is on a chunk other than the current one,
+  Resume / Continue restarts at the **first chunk of that sentence** instead of
+  carrying on where the reader was (`panelRestartIndex`, `core.ts`, applied in
+  `toggle-pause`, `reading-continue`, `reveal-continue`). Pete's workflow: the
+  scrubber for rough positioning, a tap on a word for fine. A panel on the
+  current chunk keeps the old behaviour (resume the chunk; advance in the
+  manual modes), so Reading mode's in-panel Continue still advances.
 - In **Reading mode**, once the definition loads the panel header also shows a
   **Continue →** button (next to the ×) that advances to the next chunk and
   closes the panel in one tap — so you don't have to close the dict first to

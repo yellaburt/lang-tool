@@ -8,6 +8,7 @@ import {
   jumpLanding,
   lookupSpeechEnabled,
   upcomingItems,
+  panelRestartIndex,
   passageUnits,
   scrubPreview,
   precedingContext,
@@ -160,6 +161,33 @@ describe('scrubber position', () => {
     expect(scrubPreview('Dos es allá y más.')).toBe('Dos es allá y más.');
     expect(scrubPreview('a b c d e f g h i j', 3)).toBe('a b c…');
     expect(scrubPreview('   ')).toBe('');
+  });
+});
+
+describe('panelRestartIndex', () => {
+  // Sentence 1 spans chunks 1–2; the reader is on chunk 3 (sentence 2).
+  const cs = [
+    chunk(0, 0, 'Uno es aquí.'),
+    chunk(1, 1, 'Dos es allá'),
+    chunk(2, 1, 'y más.'),
+    chunk(3, 2, 'Tres.'),
+  ];
+  const p = passage('x', cs);
+
+  it('restarts at the first chunk of the tapped sentence', () => {
+    expect(panelRestartIndex(p, 3, cs[2]!.id)).toBe(1);
+    expect(panelRestartIndex(p, 3, cs[1]!.id)).toBe(1);
+    expect(panelRestartIndex(p, 3, cs[0]!.id)).toBe(0);
+  });
+
+  it('goes to the sentence start even from a later chunk of the current sentence', () => {
+    expect(panelRestartIndex(p, 2, cs[1]!.id)).toBe(1);
+  });
+
+  it('leaves the usual behaviour alone for the current chunk or no panel', () => {
+    expect(panelRestartIndex(p, 3, cs[3]!.id)).toBeNull();
+    expect(panelRestartIndex(p, 3, null)).toBeNull();
+    expect(panelRestartIndex(p, 3, 'nope' as ChunkId)).toBeNull();
   });
 });
 

@@ -44,7 +44,7 @@ const READING_MODE_LABEL: Readonly<Record<ReadingMode, string>> = {
   listening: 'Listening',
   light: 'Light',
   reading: 'Reading',
-  reveal: 'Read, listen, reveal',
+  reveal: 'Hide while listening',
 };
 
 // === Shared view props ===

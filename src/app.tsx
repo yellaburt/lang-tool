@@ -10,6 +10,7 @@ import {
   replaceChunk,
   hasReadableText,
   jumpLanding,
+  panelRestartIndex,
   shiftedPieces,
   splitLyricsIntoLines,
   splitSentences,
@@ -425,6 +426,18 @@ function moveToChunk(state: AppState, index: number): AppState {
       grammarPanel: null,
     },
   };
+}
+
+// If an open word-lookup / grammar panel sits on a chunk other than the one
+// being read, Continue / Resume restarts at that chunk's sentence instead of
+// carrying on where the reader was (see panelRestartIndex). Null = carry on.
+function panelRestart(state: AppState): number | null {
+  const passageId = state.ui.currentPassageId;
+  if (passageId === null) return null;
+  const passage = state.learner.passages[passageId];
+  if (!passage) return null;
+  const panelChunkId = state.ui.wordLookup?.chunkId ?? state.ui.grammarPanel?.chunkId ?? null;
+  return panelRestartIndex(passage, passage.lastReadChunkIndex, panelChunkId);
 }
 
 function reducer(state: AppState, action: AppAction): AppState {
@@ -851,8 +864,13 @@ function reducer(state: AppState, action: AppAction): AppState {
       // utterance mid-word. To advance, use the ▶ button or → arrow.
       //
       // Resuming (was paused → now playing) also dismisses any open word
-      // lookup panel — Pete's "get out of my way and read" expectation.
+      // lookup panel — Pete's "get out of my way and read" expectation. If that
+      // panel is on another sentence, resume from the start of that sentence.
       const willBePaused = !state.ui.isPaused;
+      if (!willBePaused) {
+        const restart = panelRestart(state);
+        if (restart !== null) return moveToChunk(state, restart);
+      }
       return {
         ...state,
         ui: {
@@ -950,6 +968,9 @@ function reducer(state: AppState, action: AppAction): AppState {
       };
 
     case 'reading-continue': {
+      // Continue from inside a panel on another sentence: restart there.
+      const restart = panelRestart(state);
+      if (restart !== null) return moveToChunk(state, restart);
       // During SPEAKING, Continue skips the rest of the audio and advances now.
       if (state.ui.readingSpeaking) return advanceToNextChunk(state);
       // From READING: hide the English immediately, then branch on the setting.
@@ -980,6 +1001,9 @@ function reducer(state: AppState, action: AppAction): AppState {
       //   READ     = !readingSpeaking && !spanishTtsDone
       //   LISTEN   =  readingSpeaking && !spanishTtsDone  (text hidden)
       //   REVEALED =  spanishTtsDone                      (English behind a tap)
+      // Continue from inside a panel on another sentence: restart there.
+      const restart = panelRestart(state);
+      if (restart !== null) return moveToChunk(state, restart);
       const { readingSpeaking, spanishTtsDone } = state.ui;
       if (spanishTtsDone) return advanceToNextChunk(state);
       if (readingSpeaking) {
