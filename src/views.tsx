@@ -2075,7 +2075,26 @@ export function ReadingView({ state, dispatch }: ViewProps) {
   // part of it is off-screen. 'nearest' (not 'center') means a visible row is
   // never yanked around: the view stays put so the reader can tap a word, and
   // nothing scrolls out of reach or reserves empty space prematurely.
+  //
+  // One exception: stepping from a sentence's last chunk into the next
+  // sentence. The finished sentence collapses from stacked Spanish/English
+  // rows into two paragraphs, so everything above the new row jumps up by the
+  // shrinkage — most of a phone screen for a long sentence — and the collapsed
+  // English paragraph, where the last segment's gloss now lives, slides off
+  // the top edge. Pete kept scrolling back up to find it. If that paragraph is
+  // cut off, scroll so it is fully visible with the new row still beneath it
+  // (see revealCollapsedEnglish).
+  const prevPositionRef = useRef({
+    chunkIndex: currentChunkIndex,
+    sentenceIndex: currentChunk?.sentenceIndex,
+  });
   useEffect(() => {
+    const prev = prevPositionRef.current;
+    const sentenceIndex = currentChunk?.sentenceIndex;
+    prevPositionRef.current = { chunkIndex: currentChunkIndex, sentenceIndex };
+    const crossedSentence =
+      currentChunkIndex === prev.chunkIndex + 1 && sentenceIndex !== prev.sentenceIndex;
+    if (crossedSentence && revealCollapsedEnglish(sentencesRef.current)) return;
     scrollActiveIntoView('nearest');
   }, [currentChunkIndex, spanishTtsDone, scrollActiveIntoView]);
 
@@ -2972,6 +2991,36 @@ export function ReadingView({ state, dispatch }: ViewProps) {
       <KeyboardHint />
     </main>
   );
+}
+
+// After a plain advance into a new sentence, the previous sentence has just
+// collapsed into paragraph form (see SentenceItem's past branch). If its
+// English paragraph now sits above the scroller's top edge, scroll so the
+// whole paragraph is visible with the new current row beneath it; when the two
+// won't fit on one screen, bottom-align the row instead so as much of the
+// paragraph as possible shows. Returns false when there is nothing to do — no
+// collapsed sentence directly above, no English, or it is already in view — so
+// the caller falls back to the usual 'nearest' nudge.
+function revealCollapsedEnglish(root: HTMLOListElement | null): boolean {
+  if (!root) return false;
+  const row = root.querySelector('.pair-row.current');
+  const scroller = root.closest('.reading-scroll');
+  if (!(row instanceof HTMLElement) || !(scroller instanceof HTMLElement)) return false;
+  const prevLi = row.closest('.sentence.current')?.previousElementSibling;
+  if (!prevLi?.classList.contains('past')) return false;
+  const en = prevLi.querySelector(':scope > .en');
+  if (!(en instanceof HTMLElement)) return false;
+  const margin = 8;
+  const view = scroller.getBoundingClientRect();
+  const enTop = en.getBoundingClientRect().top - margin;
+  if (enTop >= view.top) return false;
+  const rowBottom = row.getBoundingClientRect().bottom;
+  if (rowBottom - enTop <= view.height) {
+    scroller.scrollBy({ top: enTop - view.top, behavior: 'smooth' });
+  } else {
+    row.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }
+  return true;
 }
 
 // === Per-sentence rendering ===
