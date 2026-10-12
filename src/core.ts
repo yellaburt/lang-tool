@@ -1008,11 +1008,14 @@ export function scrubPreview(text: string, maxWords = 8): string {
 }
 
 // Where Continue / Resume picks up after a word lookup or grammar panel: if the
-// panel is on a chunk other than the one being read, the first chunk of that
-// chunk's sentence — tapping a word in an earlier sentence is how the reader
-// says "from here" (the scrubber for rough positioning, a tap for fine). Null
-// when the panel is on the current chunk or nothing is open: carry on as usual
-// (resume the chunk, or advance in the manual modes).
+// panel is on a chunk in a sentence other than the one being read, the first
+// chunk of that sentence — tapping a word in an earlier sentence is how the
+// reader says "from here" (the scrubber for rough positioning, a tap for fine).
+// Null when the panel is in the current sentence or nothing is open: carry on
+// as usual (resume the chunk, or advance in the manual modes). The current
+// sentence's earlier segments sit stacked right above the active row, so a
+// lookup there is just a lookup; rewinding to the sentence start on Continue
+// (several segments back in a long sentence) read as a bug.
 export function panelRestartIndex(
   passage: Passage,
   currentChunkIndex: number,
@@ -1021,6 +1024,8 @@ export function panelRestartIndex(
   if (panelChunkId === null) return null;
   const tapped = passage.chunks.find((c) => c.id === panelChunkId);
   if (!tapped || tapped.index === currentChunkIndex) return null;
+  const current = passage.chunks[currentChunkIndex];
+  if (current && current.sentenceIndex === tapped.sentenceIndex) return null;
   const first = passage.chunks.find((c) => c.sentenceIndex === tapped.sentenceIndex);
   return first ? first.index : null;
 }

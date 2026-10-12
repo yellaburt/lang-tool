@@ -172,10 +172,14 @@ Home (jump to start).
 - Tap × on the panel to dismiss without resuming. Tap ▶ Resume on the
   control bar to dismiss AND continue reading.
 - **Tapping a word in another sentence moves the reader there.** If the open
-  panel (word lookup or grammar) is on a chunk other than the current one,
-  Resume / Continue restarts at the **first chunk of that sentence** instead of
-  carrying on where the reader was (`panelRestartIndex`, `core.ts`, applied in
-  `toggle-pause`, `reading-continue`, `reveal-continue`). **Highlighting text**
+  panel (word lookup or grammar) is on a chunk in a sentence other than the
+  current one, Resume / Continue restarts at the **first chunk of that
+  sentence** instead of carrying on where the reader was (`panelRestartIndex`,
+  `core.ts`, applied in `toggle-pause`, `reading-continue`, `reveal-continue`).
+  A tap on an earlier segment of the *current* sentence (stacked right above
+  the active row) is just a lookup: Continue carries on. It used to rewind to
+  the sentence start, which Pete reported as "Continue resumes from several
+  segments earlier". **Highlighting text**
   (the native copy selection) in a chunk counts the same way: a `selectionchange`
   listener in ReadingView maps the selection to the nearest `data-chunk-id`
   and stores it as `ui.selectionChunkId`. It's remembered rather than read at

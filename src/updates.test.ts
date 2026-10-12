@@ -180,8 +180,10 @@ describe('panelRestartIndex', () => {
     expect(panelRestartIndex(p, 3, cs[0]!.id)).toBe(0);
   });
 
-  it('goes to the sentence start even from a later chunk of the current sentence', () => {
-    expect(panelRestartIndex(p, 2, cs[1]!.id)).toBe(1);
+  it('carries on when the tapped chunk is an earlier segment of the current sentence', () => {
+    // Reader on chunk 2 (second half of sentence 1), lookup on chunk 1 above it:
+    // Continue must not rewind to the sentence start.
+    expect(panelRestartIndex(p, 2, cs[1]!.id)).toBeNull();
   });
 
   it('leaves the usual behaviour alone for the current chunk or no panel', () => {
