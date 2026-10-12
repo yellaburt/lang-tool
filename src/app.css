@@ -1596,6 +1596,7 @@ html[data-theme='high-contrast']:not([data-highlight-subjunctive='off']) .mood-v
 .lookup-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap; /* word + Read from here + Continue + × on a phone */
   gap: 0.5rem;
   margin-bottom: 0.4rem;
 }
@@ -1627,6 +1628,28 @@ html[data-theme='high-contrast']:not([data-highlight-subjunctive='off']) .mood-v
 
 .lookup-continue:hover {
   background: #4a7ad8;
+}
+
+/* "Read from here" when the panel sits in another sentence: relocates the
+   reader to that sentence's start. Outlined, so Continue stays the primary. */
+.lookup-restart {
+  flex: 0 0 auto;
+  background: none;
+  color: #5b8def;
+  border: 1.5px solid #5b8def;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  padding: 0 0.8rem;
+  min-height: 36px;
+  cursor: pointer;
+}
+
+.lookup-restart:hover {
+  background: rgba(91, 141, 239, 0.12);
 }
 
 .lookup-dismiss {

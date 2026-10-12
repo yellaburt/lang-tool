@@ -255,6 +255,11 @@ export type AppAction =
   // (text hidden, audio plays) → REVEALED (text back, English behind a tap) →
   // next chunk. Tapped during LISTEN it skips the rest of the audio.
   | { readonly kind: 'reveal-continue' }
+  // "Read from here" in a word-lookup / grammar panel that sits in another
+  // sentence: move the reader to `index` (that sentence's first chunk). In
+  // Reading mode with readAloudOnAdvance on, land in SPEAKING so the one tap
+  // both moves and reads (see 'reading-continue').
+  | { readonly kind: 'read-from-here'; readonly index: number }
   | { readonly kind: 'open-passage'; readonly passageId: PassageId; readonly now: number }
   | { readonly kind: 'delete-passage'; readonly passageId: PassageId }
   | { readonly kind: 'rename-passage'; readonly passageId: PassageId; readonly title: string }
@@ -440,20 +445,20 @@ function moveToChunk(state: AppState, index: number): AppState {
   };
 }
 
-// If an open word-lookup / grammar panel sits on a chunk other than the one
-// being read, Continue / Resume restarts at that chunk's sentence instead of
-// carrying on where the reader was (see panelRestartIndex). Null = carry on.
+// If text was highlighted in a chunk of another sentence, Continue / Resume
+// restarts at that sentence instead of carrying on where the reader was (see
+// panelRestartIndex). Null = carry on. An open word-lookup / grammar panel
+// never relocates on its own — looking a word up in the sentence just finished
+// kept sending Pete back to it; relocating from a panel is the explicit
+// "Read from here" button ('read-from-here'). A panel also masks a highlight:
+// the reader is looking things up, not repositioning.
 function panelRestart(state: AppState): number | null {
   const passageId = state.ui.currentPassageId;
   if (passageId === null) return null;
   const passage = state.learner.passages[passageId];
   if (!passage) return null;
-  const panelChunkId =
-    state.ui.wordLookup?.chunkId ??
-    state.ui.grammarPanel?.chunkId ??
-    state.ui.selectionChunkId ??
-    null;
-  return panelRestartIndex(passage, passage.lastReadChunkIndex, panelChunkId);
+  if (state.ui.wordLookup !== null || state.ui.grammarPanel !== null) return null;
+  return panelRestartIndex(passage, passage.lastReadChunkIndex, state.ui.selectionChunkId);
 }
 
 function reducer(state: AppState, action: AppAction): AppState {
@@ -987,11 +992,25 @@ function reducer(state: AppState, action: AppAction): AppState {
         },
       };
 
+    case 'read-from-here': {
+      // From a panel in another sentence (see panelRestartIndex in the view).
+      // Reading mode with readAloudOnAdvance on lands in SPEAKING so the one tap
+      // both moves the reader and reads the sentence — landing silent and
+      // needing a second press was the complaint; see 'reading-continue'.
+      const passageId = state.ui.currentPassageId;
+      const passage = passageId !== null ? state.learner.passages[passageId] : undefined;
+      if (!passage || action.index < 0 || action.index >= passage.chunks.length) return state;
+      const moved = moveToChunk(state, action.index);
+      const { readingMode, readAloudOnAdvance } = state.learner.settings;
+      if (readingMode !== 'reading' || !readAloudOnAdvance) return moved;
+      return { ...moved, ui: { ...moved.ui, readingSpeaking: true } };
+    }
+
     case 'reading-continue': {
-      // Continue with a lookup / highlight on another sentence: restart there,
-      // and with readAloudOnAdvance on go straight into SPEAKING so the one
-      // press both moves the reader and reads the sentence — landing silent
-      // and needing a second Continue was the complaint.
+      // Continue with text highlighted in another sentence: restart there, and
+      // with readAloudOnAdvance on go straight into SPEAKING so the one press
+      // both moves the reader and reads the sentence — landing silent and
+      // needing a second Continue was the complaint.
       const restart = panelRestart(state);
       if (restart !== null) {
         const moved = moveToChunk(state, restart);
@@ -1028,7 +1047,7 @@ function reducer(state: AppState, action: AppAction): AppState {
       //   READ     = !readingSpeaking && !spanishTtsDone
       //   LISTEN   =  readingSpeaking && !spanishTtsDone  (text hidden)
       //   REVEALED =  spanishTtsDone                      (English behind a tap)
-      // Continue from inside a panel on another sentence: restart there.
+      // Continue with text highlighted in another sentence: restart there.
       const restart = panelRestart(state);
       if (restart !== null) return moveToChunk(state, restart);
       const { readingSpeaking, spanishTtsDone } = state.ui;

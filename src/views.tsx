@@ -8,6 +8,7 @@ import {
   findNextChapter,
   isBookLikeFolder,
   lookupSpeechEnabled,
+  panelRestartIndex,
   passagePercentRead,
   passageUnits,
   scrubPreview,
@@ -2635,6 +2636,16 @@ export function ReadingView({ state, dispatch }: ViewProps) {
       ? { kind: 'reveal-continue' }
       : null;
 
+  // "Read from here" in a panel that sits in a sentence other than the one
+  // being read: the only way a lookup moves the reader. Null when the panel is
+  // in the current sentence (or nothing is open) — then it's just a lookup.
+  const panelChunkId = state.ui.wordLookup?.chunkId ?? state.ui.grammarPanel?.chunkId ?? null;
+  const panelRestartTarget = passage
+    ? panelRestartIndex(passage, currentChunkIndex, panelChunkId)
+    : null;
+  const panelReadFromHere: AppAction | null =
+    panelRestartTarget !== null ? { kind: 'read-from-here', index: panelRestartTarget } : null;
+
   if (!passage) {
     return <ErrorView dispatch={dispatch} message="No passage loaded." />;
   }
@@ -2717,6 +2728,7 @@ export function ReadingView({ state, dispatch }: ViewProps) {
               }
               showCurrentGloss={showCurrentGloss}
               panelContinue={panelContinue}
+              panelReadFromHere={panelReadFromHere}
               chunkRetry={state.ui.chunkRetry}
               lookupWordRef={lookupWordRef}
               dispatch={dispatch}
@@ -3059,6 +3071,9 @@ interface SentenceItemProps {
   // lookup/grammar panels, so the reader can advance straight from an open
   // definition. Null in the modes that don't park.
   readonly panelContinue: AppAction | null;
+  // "Read from here" for a panel sitting in another sentence; null when the
+  // panel is in the current sentence. Rendered in the panel header.
+  readonly panelReadFromHere: AppAction | null;
   // State of a manual "retry translation", to show progress/failure on the
   // chunk being retried.
   readonly chunkRetry: ChunkRetryUiState | null;
@@ -3142,6 +3157,7 @@ function SentenceItem({
   hideCurrentChunkText,
   showCurrentGloss,
   panelContinue,
+  panelReadFromHere,
   chunkRetry,
   lookupWordRef,
   dispatch,
@@ -3213,6 +3229,7 @@ function SentenceItem({
           <WordLookupPanel
             lookup={wordLookup}
             continueAction={panelContinue}
+            readFromHere={panelReadFromHere}
             lookupWordRef={lookupWordRef}
             dispatch={dispatch}
           />
@@ -3221,6 +3238,7 @@ function SentenceItem({
           <GrammarPanel
             panel={grammarPanel}
             continueAction={panelContinue}
+            readFromHere={panelReadFromHere}
             dispatch={dispatch}
           />
         )}
@@ -3301,6 +3319,7 @@ function SentenceItem({
         <WordLookupPanel
           lookup={wordLookup}
           continueAction={panelContinue}
+          readFromHere={panelReadFromHere}
           lookupWordRef={lookupWordRef}
           dispatch={dispatch}
         />
@@ -3309,6 +3328,7 @@ function SentenceItem({
         <GrammarPanel
           panel={grammarPanel}
           continueAction={panelContinue}
+          readFromHere={panelReadFromHere}
           dispatch={dispatch}
         />
       )}
@@ -3865,11 +3885,13 @@ function ClickableSpanish({
 function WordLookupPanel({
   lookup,
   continueAction,
+  readFromHere,
   lookupWordRef,
   dispatch,
 }: {
   lookup: WordLookupUiState;
   continueAction: AppAction | null;
+  readFromHere: AppAction | null;
   lookupWordRef: { current: HTMLElement | null };
   dispatch: (a: AppAction) => void;
 }) {
@@ -3905,6 +3927,21 @@ function WordLookupPanel({
       >
       <div className="lookup-header">
         <span className="lookup-word">{lookup.word}</span>
+        {/* Panel in another sentence: the explicit way to start reading there.
+            Looking a word up never moves the reader by itself. */}
+        {readFromHere !== null && lookup.kind === 'ready' && (
+          <button
+            type="button"
+            className="lookup-restart"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              dispatch(readFromHere);
+            }}
+            title="Start reading from this sentence (closes this definition)"
+          >
+            ▶ Read from here
+          </button>
+        )}
         {/* Reading / reveal mode: advance straight from the open definition.
             Only once the definition is loaded, so it doesn't flicker in while
             looking up. Sits in the header so it never crowds the
@@ -3986,10 +4023,12 @@ function WordLookupPanel({
 function GrammarPanel({
   panel,
   continueAction,
+  readFromHere,
   dispatch,
 }: {
   panel: GrammarPanelUiState;
   continueAction: AppAction | null;
+  readFromHere: AppAction | null;
   dispatch: (a: AppAction) => void;
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -4017,6 +4056,19 @@ function GrammarPanel({
       >
         <div className="lookup-header">
           <span className="lookup-word">Grammar</span>
+          {readFromHere !== null && panel.kind === 'ready' && (
+            <button
+              type="button"
+              className="lookup-restart"
+              onClick={(e) => {
+                e.currentTarget.blur();
+                dispatch(readFromHere);
+              }}
+              title="Start reading from this sentence (closes this panel)"
+            >
+              ▶ Read from here
+            </button>
+          )}
           {/* Reading / reveal mode: advance straight from the open panel (see
               WordLookupPanel for the rationale). The continue action closes it. */}
           {continueAction !== null && panel.kind === 'ready' && (

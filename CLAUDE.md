@@ -171,27 +171,27 @@ Home (jump to start).
   chunks only.
 - Tap × on the panel to dismiss without resuming. Tap ▶ Resume on the
   control bar to dismiss AND continue reading.
-- **Tapping a word in another sentence moves the reader there.** If the open
-  panel (word lookup or grammar) is on a chunk in a sentence other than the
-  current one, Resume / Continue restarts at the **first chunk of that
-  sentence** instead of carrying on where the reader was (`panelRestartIndex`,
-  `core.ts`, applied in `toggle-pause`, `reading-continue`, `reveal-continue`).
-  A tap on an earlier segment of the *current* sentence (stacked right above
-  the active row) is just a lookup: Continue carries on. It used to rewind to
-  the sentence start, which Pete reported as "Continue resumes from several
-  segments earlier". **Highlighting text**
-  (the native copy selection) in a chunk counts the same way: a `selectionchange`
+- **A lookup never moves the reader by itself.** Resume / Continue after a
+  word-lookup or grammar panel carries on where the reader was, whichever
+  chunk the panel is on. (Oct 2026: the panel used to relocate Continue to the
+  tapped sentence's start; Pete looks words up in the sentence he just
+  finished — now kept on screen — and kept getting sent back to it.) When the
+  panel sits in a **different sentence**, its header shows **▶ Read from
+  here**: the explicit relocation. It dispatches `read-from-here` with the
+  first chunk of that sentence (`panelRestartIndex`, `core.ts`; null for the
+  current sentence, so the button is hidden there). In **Reading mode with
+  read-aloud-on-advance on**, it lands directly in the SPEAKING phase
+  (`readingSpeaking: true`), so one tap both moves and reads. Pete's workflow:
+  the scrubber for rough positioning, then a word tap + Read from here for fine.
+  **Highlighting text** (the native copy selection) in another sentence still
+  relocates Resume / Continue (`panelRestart` in `app.tsx`, applied in
+  `toggle-pause`, `reading-continue`, `reveal-continue`): a `selectionchange`
   listener in ReadingView maps the selection to the nearest `data-chunk-id`
   and stores it as `ui.selectionChunkId`. It's remembered rather than read at
   click time because tapping a control collapses the selection before the
-  click lands; navigation clears it (`freshPhaseFlags`). Lookup/grammar win
-  over a stale selection. In **Reading mode with read-aloud-on-advance on**,
-  the restart lands directly in the SPEAKING phase (`readingSpeaking: true`),
-  so one Continue both moves to the sentence and reads it; landing silent and
-  needing a second press was the complaint. With read-aloud off it just lands. Pete's workflow: the
-  scrubber for rough positioning, a tap on a word for fine. A panel on the
-  current chunk keeps the old behaviour (resume the chunk; advance in the
-  manual modes), so Reading mode's in-panel Continue still advances.
+  click lands; navigation clears it (`freshPhaseFlags`), and an open panel
+  masks it. A highlight has no other purpose in the app, so it doesn't collide
+  with lookups the way a word tap did.
 - In **Reading mode**, once the definition loads the panel header also shows a
   **Continue →** button (next to the ×) that advances to the next chunk and
   closes the panel in one tap — so you don't have to close the dict first to
